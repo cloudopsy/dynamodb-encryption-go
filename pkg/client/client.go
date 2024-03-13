@@ -92,7 +92,7 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 		}
 	}
 
-	encryptionMaterials, err := c.materialsProvider.EncryptionMaterials(ctx, encryptionContext)
+	encryptionMaterials, err := c.materialsProvider.EncryptionMaterials(encryptionContext)
 	if err != nil {
 		return nil, err
 	}

@@ -9,12 +9,12 @@ import (
 
 // CryptoProvider is an interface for a cryptographic provider
 type CryptoProvider interface {
-	EncryptAttribute(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
-	DecryptAttribute(ctx context.Context, attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
-	EncryptAttributeDeterministically(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
-	DecryptAttributeDeterministically(ctx context.Context, attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
-	GenerateDataKey(ctx context.Context, encryptionContext map[string]string) ([]byte, []byte, error)
-	DecryptDataKey(ctx context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error)
+	EncryptAttribute(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
+	DecryptAttribute(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
+	EncryptAttributeDeterministically(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
+	DecryptAttributeDeterministically(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
+	GenerateDataKey(encryptionContext map[string]string) ([]byte, []byte, error)
+	DecryptDataKey(ciphertext []byte, encryptionContext map[string]string) ([]byte, error)
 }
 
 // CryptographicMaterialsProvider is an interface for a cryptographic materials provider
@@ -35,8 +35,8 @@ func NewCryptographicMaterialsProvider(cryptoProvider CryptoProvider, descriptio
 }
 
 // EncryptionMaterials generates encryption materials
-func (p *CryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, encryptionContext map[string]string) (map[string]*dynamodb.AttributeValue, error) {
-	_, encryptedDataKey, err := p.cryptoProvider.GenerateDataKey(ctx, encryptionContext)
+func (p *CryptographicMaterialsProvider) EncryptionMaterials(encryptionContext map[string]string) (map[string]*dynamodb.AttributeValue, error) {
+	_, encryptedDataKey, err := p.cryptoProvider.GenerateDataKey(encryptionContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate data key: %v", err)
 	}
@@ -67,7 +67,7 @@ func (p *CryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context
 		}
 	}
 
-	_, err := p.cryptoProvider.DecryptDataKey(ctx, ciphertext, decryptionContext)
+	_, err := p.cryptoProvider.DecryptDataKey(ciphertext, decryptionContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data key: %v", err)
 	}
