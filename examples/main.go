@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 
-	"github.com/cloudopsy/dynamodb-encryption-sdk-go/pkg/client"
-	"github.com/cloudopsy/dynamodb-encryption-sdk-go/pkg/provider"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
 
 func main() {
