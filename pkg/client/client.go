@@ -7,7 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
 
@@ -15,7 +15,7 @@ type CryptoAction int
 
 const (
 	CryptoActionEncrypt CryptoAction = iota
-	CryptoActionEncryptDeterministicly
+	CryptoActionEncryptDeterministically
 	CryptoActionSign
 	CryptoActionDoNothing
 )
@@ -49,15 +49,18 @@ type TableKeySchema struct {
 
 type EncryptedClient struct {
 	client            dynamodb.DynamoDB
+	cryptoProvider    crypto.Crypto
 	materialsProvider provider.CryptographicMaterialsProvider
 	attributeActions  *AttributeActions
 	tableKeySchemas   map[string]TableKeySchema
 }
 
-func NewEncryptedClient(client *dynamodb.DynamoDB, materialsProvider provider.CryptographicMaterialsProvider, attributeActions *AttributeActions) *EncryptedClient {
+// NewEncryptedClient creates a new EncryptedClient
+func NewEncryptedClient(client *dynamodb.DynamoDB, cryptoProvider *crypto.Crypto, materialsProvider *provider.CryptographicMaterialsProvider, attributeActions *AttributeActions) *EncryptedClient {
 	return &EncryptedClient{
 		client:            *client,
-		materialsProvider: materialsProvider,
+		cryptoProvider:    *cryptoProvider,
+		materialsProvider: *materialsProvider,
 		attributeActions:  attributeActions,
 		tableKeySchemas:   make(map[string]TableKeySchema),
 	}
@@ -108,47 +111,19 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 
 		switch action {
 		case CryptoActionEncrypt:
-			var plaintext []byte
-			if v.S != nil {
-				plaintext = []byte(*v.S)
-			} else if v.N != nil {
-				plaintext = []byte(*v.N)
-			} else if v.B != nil {
-				plaintext = v.B
-			} else {
-				encryptedItem[k] = v
-				continue
-			}
-
-			ciphertext, err := encryptionMaterials.EncryptionKey.Encrypt(plaintext, []byte(k))
+			ciphertext, err := c.cryptoProvider.EncryptAttribute(k, v)
 			if err != nil {
 				return nil, err
 			}
-			encryptedItem[k] = &dynamodb.AttributeValue{B: ciphertext}
-
-			encryptedItem[fmt.Sprintf("__encryption_method-%s", k)] = &dynamodb.AttributeValue{S: aws.String("aead")}
-
-		case CryptoActionEncryptDeterministicly:
-			var plaintext []byte
-			if v.S != nil {
-				plaintext = []byte(*v.S)
-			} else if v.N != nil {
-				plaintext = []byte(*v.N)
-			} else if v.B != nil {
-				plaintext = v.B
-			} else {
-				encryptedItem[k] = v
-				continue
-			}
-
-			fmt.Println("Encryption Associated data: ", k)
-
-			ciphertext, err := encryptionMaterials.DeterministicAEADKey.EncryptDeterministically(plaintext, []byte(k))
+			encryptedItem[k] = ciphertext
+			encryptedItem[fmt.Sprintf("__encryption_method-for_for-%s", k)] = &dynamodb.AttributeValue{S: aws.String("aead")}
+		case CryptoActionEncryptDeterministically:
+			ciphertext, err := c.cryptoProvider.EncryptAttributeDeterministically(k, v)
 			if err != nil {
 				return nil, err
 			}
-			encryptedItem[k] = &dynamodb.AttributeValue{B: ciphertext}
-			encryptedItem[fmt.Sprintf("__encryption_method-%s", k)] = &dynamodb.AttributeValue{S: aws.String("daead")}
+			encryptedItem[k] = ciphertext
+			encryptedItem[fmt.Sprintf("__encryption_method_for-%s", k)] = &dynamodb.AttributeValue{S: aws.String("daead")}
 		case CryptoActionSign:
 			// TODO: Implement signing logic
 			encryptedItem[k] = v
@@ -157,7 +132,10 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 		}
 	}
 
-	encryptedItem[provider.WrappedDataKeyAttrName] = &dynamodb.AttributeValue{S: aws.String(encryptionMaterials.Description[provider.WrappedDataKeyAttrName])}
+	for k, v := range encryptionMaterials {
+		encryptedItem[k] = v
+	}
+
 	input.Item = encryptedItem
 
 	return c.client.PutItemWithContext(ctx, input)
@@ -175,65 +153,43 @@ func (c *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemIn
 		return nil, err
 	}
 
-	// Create the decryption context based on the key attributes and the wrapped data key
+	// Create the decryption context based on the key attributes
 	decryptionContext := make(map[string]string)
-	if partitionKeyValue, ok := output.Item[schema.PartitionKey]; ok {
-		if partitionKeyValue.S != nil {
-			decryptionContext[schema.PartitionKey] = *partitionKeyValue.S
-		} else if partitionKeyValue.N != nil {
-			decryptionContext[schema.PartitionKey] = *partitionKeyValue.N
-		}
+	if partitionKeyValue, ok := output.Item[schema.PartitionKey]; ok && partitionKeyValue != nil {
+		decryptionContext[schema.PartitionKey] = c.getValueFromAttribute(partitionKeyValue)
 	}
-	if schema.SortKey != "" {
-		if sortKeyValue, ok := output.Item[schema.SortKey]; ok {
-			if sortKeyValue.S != nil {
-				decryptionContext[schema.SortKey] = *sortKeyValue.S
-			} else if sortKeyValue.N != nil {
-				decryptionContext[schema.SortKey] = *sortKeyValue.N
-			}
-		}
-	}
-	if wrappedDataKey, ok := output.Item[provider.WrappedDataKeyAttrName]; ok && wrappedDataKey.S != nil {
-		decryptionContext[provider.WrappedDataKeyAttrName] = *wrappedDataKey.S
-	}
-
-	decryptionMaterials, err := c.materialsProvider.DecryptionMaterials(ctx, decryptionContext)
-	if err != nil {
-		return nil, err
+	if schema.SortKey != "" && output.Item[schema.SortKey] != nil {
+		sortKeyValue := output.Item[schema.SortKey]
+		decryptionContext[schema.SortKey] = c.getValueFromAttribute(sortKeyValue)
 	}
 
 	decryptedItem := make(map[string]*dynamodb.AttributeValue)
 	for k, v := range output.Item {
-		if k == provider.WrappedDataKeyAttrName {
-			continue
-		}
-		if strings.HasPrefix(k, "__encryption_method") {
+		if k == provider.WrappedDataKeyAttrName || strings.HasPrefix(k, "__encryption_method") {
 			continue
 		}
 		if v.B != nil {
-			var plaintext []byte
+			var plaintext *dynamodb.AttributeValue
 			var err error
-			encryptionMethodAttr := output.Item[fmt.Sprintf("__encryption_method-%s", k)]
+			encryptionMethodAttr := output.Item[fmt.Sprintf("__encryption_method_for-%s", k)]
 			if encryptionMethodAttr != nil && encryptionMethodAttr.S != nil {
 				encryptionMethod := *encryptionMethodAttr.S
 				switch encryptionMethod {
 				case "daead":
-					fmt.Println("Decryption Associated data: ", k)
-					plaintext, err = decryptionMaterials.DeterministicAEADKey.DecryptDeterministically(v.B, []byte(k))
+					plaintext, err = c.cryptoProvider.DecryptAttributeDeterministically(k, v.B)
 				case "aead":
-					plaintext, err = decryptionMaterials.DecryptionKey.Decrypt(v.B, []byte(k))
+					plaintext, err = c.cryptoProvider.DecryptAttribute(k, v.B)
 				default:
 					return nil, fmt.Errorf("unsupported encryption method: %s", encryptionMethod)
 				}
 			} else {
 				// If encryption method is not found, default to regular decryption
-				plaintext, err = decryptionMaterials.DecryptionKey.Decrypt(v.B, []byte(k))
+				plaintext, err = c.cryptoProvider.DecryptAttribute(k, v.B)
 			}
-
 			if err != nil {
 				return nil, err
 			}
-			decryptedItem[k] = &dynamodb.AttributeValue{S: aws.String(string(plaintext))}
+			decryptedItem[k] = plaintext
 		} else {
 			decryptedItem[k] = v
 		}
@@ -268,4 +224,17 @@ func (c *EncryptedClient) getKeySchema(tableName string) (TableKeySchema, error)
 	c.tableKeySchemas[tableName] = schema
 
 	return schema, nil
+}
+
+func (c *EncryptedClient) getValueFromAttribute(attr *dynamodb.AttributeValue) string {
+	if attr == nil {
+		return ""
+	}
+
+	switch {
+	case attr.S != nil:
+		return *attr.S
+	default:
+		return ""
+	}
 }

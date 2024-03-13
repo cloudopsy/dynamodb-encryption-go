@@ -1,118 +1,76 @@
-// provider.go
 package provider
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/tink-crypto/tink-go-awskms/integration/awskms"
-	"github.com/tink-crypto/tink-go/v2/aead"
-	"github.com/tink-crypto/tink-go/v2/daead"
-	"github.com/tink-crypto/tink-go/v2/keyset"
-
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/materials"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
+// CryptoProvider is an interface for a cryptographic provider
+type CryptoProvider interface {
+	EncryptAttribute(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
+	DecryptAttribute(ctx context.Context, attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
+	EncryptAttributeDeterministically(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
+	DecryptAttributeDeterministically(ctx context.Context, attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
+	GenerateDataKey(ctx context.Context, encryptionContext map[string]string) ([]byte, []byte, error)
+	DecryptDataKey(ctx context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error)
+}
+
+// CryptographicMaterialsProvider is an interface for a cryptographic materials provider
+type CryptographicMaterialsProvider struct {
+	cryptoProvider CryptoProvider
+	description    map[string]string
+}
+
+// WrappedDataKeyAttrName is the name of the wrapped data key attribute
 const WrappedDataKeyAttrName = "__wrapped_data_key"
 
-type CryptographicMaterialsProvider interface {
-	EncryptionMaterials(ctx context.Context, encryptionContext map[string]string) (*materials.EncryptionMaterials, error)
-	DecryptionMaterials(ctx context.Context, encryptionContext map[string]string) (*materials.DecryptionMaterials, error)
-}
-
-type AwsKmsCryptographicMaterialsProvider struct {
-	keyID               string
-	grantTokens         []string
-	materialDescription map[string]string
-}
-
-func NewAwsKmsCryptographicMaterialsProvider(keyID string, grantTokens []string, materialDescription map[string]string) *AwsKmsCryptographicMaterialsProvider {
-	return &AwsKmsCryptographicMaterialsProvider{
-		keyID:               keyID,
-		grantTokens:         grantTokens,
-		materialDescription: materialDescription,
+// NewCryptographicMaterialsProvider creates a new CryptographicMaterialsProvider
+func NewCryptographicMaterialsProvider(cryptoProvider CryptoProvider, description map[string]string) *CryptographicMaterialsProvider {
+	return &CryptographicMaterialsProvider{
+		cryptoProvider: cryptoProvider,
+		description:    description,
 	}
 }
 
-func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, encryptionContext map[string]string) (*materials.EncryptionMaterials, error) {
-	_, encryptedDataKey, err := crypto.GenerateDataKey(p.keyID, encryptionContext)
+// EncryptionMaterials generates encryption materials
+func (p *CryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, encryptionContext map[string]string) (map[string]*dynamodb.AttributeValue, error) {
+	_, encryptedDataKey, err := p.cryptoProvider.GenerateDataKey(ctx, encryptionContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate data key: %v", err)
 	}
 
-	client, err := awskms.NewClientWithOptions(p.keyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS KMS client: %v", err)
+	materialDescription := make(map[string]*dynamodb.AttributeValue)
+	for k, v := range p.description {
+		materialDescription[k] = &dynamodb.AttributeValue{S: &v}
 	}
+	materialDescription[WrappedDataKeyAttrName] = &dynamodb.AttributeValue{B: encryptedDataKey}
 
-	kekAEAD, err := client.GetAEAD(p.keyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
-	}
-
-	encryptionKey := aead.NewKMSEnvelopeAEAD2(aead.AES256GCMKeyTemplate(), kekAEAD)
-
-	description := make(map[string]string)
-	for k, v := range p.materialDescription {
-		description[k] = v
-	}
-	description[WrappedDataKeyAttrName] = crypto.EncodeBase64(encryptedDataKey)
-
-	deterministicAEADKeyHandle, err := keyset.NewHandle(daead.AESSIVKeyTemplate())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create deterministic AEAD key handle: %v", err)
-	}
-	deterministicAEADKey, err := daead.New(deterministicAEADKeyHandle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create deterministic AEAD primitive: %v", err)
-	}
-
-	return &materials.EncryptionMaterials{
-		EncryptionKey:        encryptionKey,
-		DeterministicAEADKey: deterministicAEADKey,
-		Description:          description,
-	}, nil
+	return materialDescription, nil
 }
 
-func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, encryptionContext map[string]string) (*materials.DecryptionMaterials, error) {
-	encryptedDataKey, err := crypto.DecodeBase64(encryptionContext[WrappedDataKeyAttrName])
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted data key: %v", err)
-	}
+// DecryptionMaterials generates decryption materials
+func (p *CryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, encryptionContext map[string]*dynamodb.AttributeValue) (map[string]string, error) {
+	encryptedDataKey := encryptionContext[WrappedDataKeyAttrName]
+	ciphertext := encryptedDataKey.B
 
 	// Remove the wrapped data key from the encryption context
 	delete(encryptionContext, WrappedDataKeyAttrName)
 
-	_, err = crypto.DecryptDataKey(p.keyID, encryptedDataKey, encryptionContext)
+	decryptionContext := make(map[string]string)
+	for k, v := range encryptionContext {
+		if v.S != nil {
+			decryptionContext[k] = *v.S
+		} else if v.N != nil {
+			decryptionContext[k] = *v.N
+		}
+	}
+
+	_, err := p.cryptoProvider.DecryptDataKey(ctx, ciphertext, decryptionContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data key: %v", err)
 	}
 
-	client, err := awskms.NewClientWithOptions(p.keyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS KMS client: %v", err)
-	}
-
-	kekAEAD, err := client.GetAEAD(p.keyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
-	}
-
-	decryptionKey := aead.NewKMSEnvelopeAEAD2(aead.AES256GCMKeyTemplate(), kekAEAD)
-
-	deterministicAEADKeyHandle, err := keyset.NewHandle(daead.AESSIVKeyTemplate())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create deterministic AEAD key handle: %v", err)
-	}
-	deterministicAEADKey, err := daead.New(deterministicAEADKeyHandle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create deterministic AEAD primitive: %v", err)
-	}
-
-	return &materials.DecryptionMaterials{
-		DecryptionKey:        decryptionKey,
-		DeterministicAEADKey: deterministicAEADKey,
-		Description:          encryptionContext,
-	}, nil
+	return decryptionContext, nil
 }

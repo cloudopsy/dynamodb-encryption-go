@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
 
@@ -21,30 +22,46 @@ func main() {
 	// Create a DynamoDB client
 	dynamodbClient := dynamodb.New(sess)
 
-	// Create a DynamoDB Encryption Client
-	keyID := "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
-	materialsProvider := provider.NewAwsKmsCryptographicMaterialsProvider(keyID, nil, nil)
+	// Create a Crypto provider
+	keyURI := "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
+	cryptoProvider, err := crypto.New(keyURI)
+	if err != nil {
+		log.Fatal("Failed to create Crypto provider:", err)
+	}
+
+	materialsProvider := provider.NewCryptographicMaterialsProvider(cryptoProvider, map[string]string{
+		"example": "example-value",
+	})
 	// Configure attribute actions
 	attributeActions := client.NewAttributeActions().
-		WithDefaultAction(client.CryptoActionEncrypt)
-		// WithAttributeAction("name", client.CryptoActionEncryptDeterministicly)
-	encryptedClient := client.NewEncryptedClient(dynamodbClient, materialsProvider, attributeActions)
+		WithDefaultAction(client.CryptoActionEncrypt).
+		WithAttributeAction("name", client.CryptoActionEncryptDeterministically)
+	encryptedClient := client.NewEncryptedClient(dynamodbClient, cryptoProvider, materialsProvider, attributeActions)
 
 	// Table name for testing
 	tableName := "test"
 
 	// Create the test table if it doesn't exist
-	err := createTableIfNotExists(dynamodbClient, tableName)
+	err = createTableIfNotExists(dynamodbClient, tableName)
 	if err != nil {
 		log.Fatal("Failed to create table:", err)
 	}
 
-	// Create a new item
-	item := map[string]interface{}{
-		"id":   "123",
-		"name": "John Doe",
-		"age":  43,
-		"city": "New York",
+	// Create a new item with various attribute types
+	item := map[string]*dynamodb.AttributeValue{
+		"id":      {S: aws.String("123")},
+		"name":    {S: aws.String("John Doe")},
+		"age":     {N: aws.String("30")},
+		"city":    {S: aws.String("New York")},
+		"active":  {BOOL: aws.Bool(true)},
+		"skills":  {SS: aws.StringSlice([]string{"Go", "Python", "Java"})},
+		"scores":  {NS: aws.StringSlice([]string{"85", "92", "78"})},
+		"data":    {B: []byte("some binary data")},
+		"created": {S: aws.String(time.Now().Format(time.RFC3339))},
+		"metadata": {M: map[string]*dynamodb.AttributeValue{
+			"key1": {S: aws.String("value1")},
+			"key2": {N: aws.String("42")},
+		}},
 	}
 
 	// Put the item into the DynamoDB table
@@ -102,20 +119,13 @@ func createTableIfNotExists(client *dynamodb.DynamoDB, tableName string) error {
 	return nil
 }
 
-func putItem(encryptedClient *client.EncryptedClient, tableName string, item map[string]interface{}) error {
-	// Convert the item to DynamoDB AttributeValue map
-	attributeValues, err := dynamodbattribute.MarshalMap(item)
-	if err != nil {
-		return fmt.Errorf("failed to marshal item: %v", err)
-	}
-
-	// Put the item into the DynamoDB table
+func putItem(encryptedClient *client.EncryptedClient, tableName string, item map[string]*dynamodb.AttributeValue) error {
 	putItemInput := &dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
-		Item:      attributeValues,
+		Item:      item,
 	}
 
-	_, err = encryptedClient.PutItem(context.Background(), putItemInput)
+	_, err := encryptedClient.PutItem(context.Background(), putItemInput)
 	if err != nil {
 		return fmt.Errorf("failed to put item: %v", err)
 	}
@@ -123,8 +133,7 @@ func putItem(encryptedClient *client.EncryptedClient, tableName string, item map
 	return nil
 }
 
-func getItem(encryptedClient *client.EncryptedClient, tableName string, id string) (map[string]interface{}, error) {
-	// Get the item from the DynamoDB table
+func getItem(encryptedClient *client.EncryptedClient, tableName string, id string) (map[string]*dynamodb.AttributeValue, error) {
 	getItemInput := &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -137,18 +146,31 @@ func getItem(encryptedClient *client.EncryptedClient, tableName string, id strin
 		return nil, fmt.Errorf("failed to get item: %v", err)
 	}
 
-	// Unmarshal the decrypted item
-	var decryptedItem map[string]interface{}
-	err = dynamodbattribute.UnmarshalMap(getItemOutput.Item, &decryptedItem)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal item: %v", err)
-	}
-
-	return decryptedItem, nil
+	return getItemOutput.Item, nil
 }
 
-func printItem(item map[string]interface{}) {
+func printItem(item map[string]*dynamodb.AttributeValue) {
 	for key, value := range item {
-		fmt.Printf("%s: %v\n", key, value)
+		switch {
+		case value.S != nil:
+			fmt.Printf("%s: %s\n", key, *value.S)
+		case value.N != nil:
+			fmt.Printf("%s: %s\n", key, *value.N)
+		case value.BOOL != nil:
+			fmt.Printf("%s: %t\n", key, *value.BOOL)
+		case value.SS != nil:
+			fmt.Printf("%s: %v\n", key, aws.StringValueSlice(value.SS))
+		case value.NS != nil:
+			fmt.Printf("%s: %v\n", key, aws.StringValueSlice(value.NS))
+		case value.B != nil:
+			fmt.Printf("%s: %s\n", key, string(value.B))
+		case value.M != nil:
+			fmt.Printf("%s:\n", key)
+			for k, v := range value.M {
+				fmt.Printf("  %s: %v\n", k, v)
+			}
+		default:
+			fmt.Printf("%s: %v\n", key, value)
+		}
 	}
 }
