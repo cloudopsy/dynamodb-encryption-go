@@ -125,7 +125,8 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 				return nil, err
 			}
 			encryptedItem[k] = &dynamodb.AttributeValue{B: ciphertext}
-			encryptedItem[fmt.Sprintf("%s-encryption-method", k)] = &dynamodb.AttributeValue{S: aws.String("aead")}
+
+			encryptedItem[fmt.Sprintf("__encryption_method-%s", k)] = &dynamodb.AttributeValue{S: aws.String("aead")}
 
 		case CryptoActionEncryptDeterministicly:
 			var plaintext []byte
@@ -147,7 +148,7 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 				return nil, err
 			}
 			encryptedItem[k] = &dynamodb.AttributeValue{B: ciphertext}
-			encryptedItem[fmt.Sprintf("%s-encryption-method", k)] = &dynamodb.AttributeValue{S: aws.String("deterministic")}
+			encryptedItem[fmt.Sprintf("__encryption_method-%s", k)] = &dynamodb.AttributeValue{S: aws.String("daead")}
 		case CryptoActionSign:
 			// TODO: Implement signing logic
 			encryptedItem[k] = v
@@ -206,17 +207,17 @@ func (c *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemIn
 		if k == provider.WrappedDataKeyAttrName {
 			continue
 		}
-		if strings.HasSuffix(k, "-encryption-method") {
+		if strings.HasPrefix(k, "__encryption_method") {
 			continue
 		}
 		if v.B != nil {
 			var plaintext []byte
 			var err error
-			encryptionMethodAttr := output.Item[fmt.Sprintf("%s-encryption-method", k)]
+			encryptionMethodAttr := output.Item[fmt.Sprintf("__encryption_method-%s", k)]
 			if encryptionMethodAttr != nil && encryptionMethodAttr.S != nil {
 				encryptionMethod := *encryptionMethodAttr.S
 				switch encryptionMethod {
-				case "deterministic":
+				case "daead":
 					fmt.Println("Decryption Associated data: ", k)
 					plaintext, err = decryptionMaterials.DeterministicAEADKey.DecryptDeterministically(v.B, []byte(k))
 				case "aead":

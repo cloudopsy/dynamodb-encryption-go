@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
@@ -64,6 +63,7 @@ func main() {
 	fmt.Println("Decrypted item:")
 	printItem(decryptedItem)
 }
+
 func createTableIfNotExists(client *dynamodb.DynamoDB, tableName string) error {
 	_, err := client.DescribeTable(&dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
