@@ -9,10 +9,10 @@ import (
 
 // CryptoProvider is an interface for a cryptographic provider
 type CryptoProvider interface {
-	EncryptAttribute(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
-	DecryptAttribute(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
-	EncryptAttributeDeterministically(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
-	DecryptAttributeDeterministically(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
+	EncryptAttributeWithAEAD(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
+	DecryptAttributeWithAEAD(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
+	EncryptAttributeWithDAEAD(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
+	DecryptAttributeWithDAEAD(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
 	GenerateDataKey(encryptionContext map[string]string) ([]byte, []byte, error)
 	DecryptDataKey(ciphertext []byte, encryptionContext map[string]string) ([]byte, error)
 }

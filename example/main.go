@@ -34,8 +34,8 @@ func main() {
 	})
 	// Configure attribute actions
 	attributeActions := client.NewAttributeActions().
-		WithDefaultAction(client.CryptoActionEncrypt).
-		WithAttributeAction("name", client.CryptoActionEncryptDeterministically)
+		WithDefaultAction(crypto.Encrypt).
+		WithAttributeAction("name", crypto.EncryptDeterministically)
 	encryptedClient := client.NewEncryptedClient(dynamodbClient, cryptoProvider, materialsProvider, attributeActions)
 
 	// Table name for testing
