@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/tink-crypto/tink-go-awskms/integration/awskms"
 	"github.com/tink-crypto/tink-go/v2/aead"
 	"github.com/tink-crypto/tink-go/v2/daead"
@@ -53,7 +53,7 @@ func NewEncryptorDecryptor(ctx context.Context, options ...EncryptorOption) (*En
 }
 
 // EncryptAttribute encrypts a DynamoDB attribute based on the specified action.
-func (e *EncryptorDecryptor) EncryptAttribute(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error) {
+func (e *EncryptorDecryptor) EncryptAttribute(ctx context.Context, attributeName string, attributeValue types.AttributeValue) (types.AttributeValue, error) {
 	action, found := e.options[attributeName]
 	if !found {
 		// If no specific action is found, use the default action.
@@ -66,30 +66,30 @@ func (e *EncryptorDecryptor) EncryptAttribute(ctx context.Context, attributeName
 	case EncryptDeterministically:
 		plaintext, err := marshalAttributeValue(attributeValue)
 		if err != nil {
-			return nil, err
+			return &types.AttributeValueMemberNULL{Value: true}, err
 		}
 		ciphertext, err := e.daead.EncryptDeterministically(plaintext, []byte(attributeName))
 		if err != nil {
-			return nil, fmt.Errorf("failed to deterministically encrypt attribute: %v", err)
+			return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("failed to deterministically encrypt attribute: %v", err)
 		}
-		return &dynamodb.AttributeValue{B: ciphertext}, nil
+		return &types.AttributeValueMemberB{Value: ciphertext}, nil
 	case Encrypt:
 		plaintext, err := marshalAttributeValue(attributeValue)
 		if err != nil {
-			return nil, err
+			return &types.AttributeValueMemberNULL{Value: true}, err
 		}
 		ciphertext, err := e.aead.Encrypt(plaintext, []byte(attributeName))
 		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
+			return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("failed to encrypt attribute: %v", err)
 		}
-		return &dynamodb.AttributeValue{B: ciphertext}, nil
+		return &types.AttributeValueMemberB{Value: ciphertext}, nil
 	default:
-		return nil, fmt.Errorf("unrecognized action %v for attribute '%s'", action, attributeName)
+		return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("unrecognized action %v for attribute '%s'", action, attributeName)
 	}
 }
 
 // DecryptAttribute decrypts a DynamoDB attribute based on the specified action.
-func (e *EncryptorDecryptor) DecryptAttribute(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error) {
+func (e *EncryptorDecryptor) DecryptAttribute(ctx context.Context, attributeName string, attributeValue types.AttributeValue) (types.AttributeValue, error) {
 	option, found := e.options[attributeName]
 	if !found {
 		// If no specific action is found, use the default action.
@@ -100,52 +100,55 @@ func (e *EncryptorDecryptor) DecryptAttribute(ctx context.Context, attributeName
 	case DoNothing:
 		return attributeValue, nil
 	case EncryptDeterministically:
-		if attributeValue.B == nil {
-			return nil, fmt.Errorf("attribute value is nil or not a binary(B)")
+		ciphertext, ok := attributeValue.(*types.AttributeValueMemberB)
+		if !ok {
+			return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("attribute value is not a binary(B)")
 		}
-		plaintext, err := e.daead.DecryptDeterministically(attributeValue.B, []byte(attributeName))
+		plaintext, err := e.daead.DecryptDeterministically(ciphertext.Value, []byte(attributeName))
 		if err != nil {
-			return nil, fmt.Errorf("failed to deterministically decrypt attribute: %v", err)
+			return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("failed to deterministically decrypt attribute: %v", err)
 		}
 		return unmarshalAttributeValue(plaintext)
 	case Encrypt:
-		if attributeValue.B == nil {
-			return nil, fmt.Errorf("attribute value is nil or not a binary(B)")
+		ciphertext, ok := attributeValue.(*types.AttributeValueMemberB)
+		if !ok {
+			return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("attribute value is not a binary(B)")
 		}
-		plaintext, err := e.aead.Decrypt(attributeValue.B, []byte(attributeName))
+		plaintext, err := e.aead.Decrypt(ciphertext.Value, []byte(attributeName))
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt attribute: %v", err)
+			return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("failed to decrypt attribute: %v", err)
 		}
 		return unmarshalAttributeValue(plaintext)
 	default:
-		return nil, fmt.Errorf("unrecognized option %v for attribute '%s'", option, attributeName)
+		return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("unrecognized option %v for attribute '%s'", option, attributeName)
 	}
 }
 
 // EncryptAttributeDeterministically encrypts a DynamoDB attribute deterministically.
-func (e *EncryptorDecryptor) EncryptAttributeDeterministically(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error) {
+func (e *EncryptorDecryptor) EncryptAttributeDeterministically(ctx context.Context, attributeName string, attributeValue types.AttributeValue) (types.AttributeValue, error) {
 	plaintext, err := marshalAttributeValue(attributeValue)
 	if err != nil {
-		return nil, err
+		return &types.AttributeValueMemberNULL{Value: true}, err
 	}
 
 	ciphertext, err := e.daead.EncryptDeterministically(plaintext, []byte(attributeName))
 	if err != nil {
-		return nil, fmt.Errorf("failed to deterministically encrypt attribute: %v", err)
+		return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("failed to deterministically encrypt attribute: %v", err)
 	}
 
-	return &dynamodb.AttributeValue{B: ciphertext}, nil
+	return &types.AttributeValueMemberB{Value: ciphertext}, nil
 }
 
 // DecryptAttributeDeterministically decrypts a DynamoDB attribute deterministically.
-func (e *EncryptorDecryptor) DecryptAttributeDeterministically(ctx context.Context, attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error) {
-	if attributeValue.B == nil {
-		return nil, fmt.Errorf("attribute value is nil or not a binary(B)")
+func (e *EncryptorDecryptor) DecryptAttributeDeterministically(ctx context.Context, attributeName string, attributeValue types.AttributeValue) (types.AttributeValue, error) {
+	ciphertext, ok := attributeValue.(*types.AttributeValueMemberB)
+	if !ok {
+		return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("attribute value is not a binary(B)")
 	}
 
-	plaintext, err := e.daead.DecryptDeterministically(attributeValue.B, []byte(attributeName))
+	plaintext, err := e.daead.DecryptDeterministically(ciphertext.Value, []byte(attributeName))
 	if err != nil {
-		return nil, fmt.Errorf("failed to deterministically decrypt attribute: %v", err)
+		return &types.AttributeValueMemberNULL{Value: true}, fmt.Errorf("failed to deterministically decrypt attribute: %v", err)
 	}
 
 	return unmarshalAttributeValue(plaintext)
@@ -180,14 +183,6 @@ func (e *EncryptorDecryptor) UnwrapKey(ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-func setupAEAD() (tink.AEAD, error) {
-	kh, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local key handle: %v", err)
-	}
-	return aead.New(kh)
-}
-
 func setupKmsEnvelopeAEAD(keyURI string) (tink.AEAD, error) {
 	client, err := awskms.NewClientWithOptions(keyURI)
 	if err != nil {
@@ -198,6 +193,14 @@ func setupKmsEnvelopeAEAD(keyURI string) (tink.AEAD, error) {
 		return nil, fmt.Errorf("failed to get AEAD primitive from KMS: %v", err)
 	}
 	return aead.NewKMSEnvelopeAEAD2(aead.AES256GCMKeyTemplate(), kek), nil
+}
+
+func setupAEAD() (tink.AEAD, error) {
+	kh, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local key handle: %v", err)
+	}
+	return aead.New(kh)
 }
 
 func setupDAEAD() (tink.DeterministicAEAD, error) {

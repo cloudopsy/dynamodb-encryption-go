@@ -6,9 +6,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/cloudopsy/dynamodb-encryption-go/internal/crypto"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
@@ -16,18 +17,19 @@ import (
 
 func main() {
 	// Initialize an AWS session.
-	sess := session.Must(session.NewSession(&aws.Config{
-		Region: aws.String("eu-west-2"),
-	}))
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("eu-west-2"))
+	if err != nil {
+		log.Fatalf("Failed to load AWS config: %v", err)
+	}
 
 	// Create a DynamoDB client.
-	dynamodbClient := dynamodb.New(sess)
+	dynamodbClient := dynamodb.NewFromConfig(cfg)
 
 	// Set up the key URI for AWS KMS.
 	keyURI := "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
 
 	// Initialize the AWS KMS Cryptographic Materials Provider with specific options.
-	materialsProvider := provider.NewsCryptographicMaterialsProvider(sess,
+	materialsProvider := provider.NewsCryptographicMaterialsProvider(
 		crypto.WithKMS(keyURI),
 		crypto.WithDefault(crypto.Encrypt),
 		crypto.WithAttribute("email", crypto.EncryptDeterministically),
@@ -41,16 +43,16 @@ func main() {
 	tableName := "test"
 
 	// Create an example item to put into the DynamoDB table.
-	item := map[string]*dynamodb.AttributeValue{
-		"id":         {S: aws.String("001")},
-		"first_name": {S: aws.String("John")},
-		"last_name":  {S: aws.String("Doe")},
-		"email":      {S: aws.String("johndoe@example.com")},
-		"created_at": {S: aws.String(time.Now().Format(time.RFC3339))},
+	item := map[string]types.AttributeValue{
+		"id":         &types.AttributeValueMemberS{Value: "001"},
+		"first_name": &types.AttributeValueMemberS{Value: "John"},
+		"last_name":  &types.AttributeValueMemberS{Value: "Doe"},
+		"email":      &types.AttributeValueMemberS{Value: "johndoe@example.com"},
+		"created_at": &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
 	}
 
 	// Put the encrypted item into the DynamoDB table.
-	_, err := encryptedClient.PutItem(context.Background(), &dynamodb.PutItemInput{
+	_, err = encryptedClient.PutItem(context.Background(), &dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
 		Item:      item,
 	})
@@ -62,8 +64,8 @@ func main() {
 	// Retrieve the encrypted item from the DynamoDB table.
 	getItemOutput, err := encryptedClient.GetItem(context.Background(), &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {S: aws.String("001")},
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: "001"},
 		},
 	})
 	if err != nil {

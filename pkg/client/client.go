@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
 
@@ -24,8 +23,8 @@ type EncryptedClient struct {
 }
 
 type DynamoDBAPI interface {
-	PutItemWithContext(aws.Context, *dynamodb.PutItemInput, ...request.Option) (*dynamodb.PutItemOutput, error)
-	GetItemWithContext(aws.Context, *dynamodb.GetItemInput, ...request.Option) (*dynamodb.GetItemOutput, error)
+	PutItem(ctx context.Context, input *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	GetItem(ctx context.Context, input *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 }
 
 // NewEncryptedClient creates a new instance of EncryptedClient.
@@ -40,7 +39,7 @@ func NewEncryptedClient(client DynamoDBAPI, materialsProvider provider.Cryptogra
 // PutItem encrypts an item and puts it into a DynamoDB table.
 func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
 	// Create a copy of the original item map to avoid modifying it during encryption
-	originalItem := make(map[string]*dynamodb.AttributeValue)
+	originalItem := make(map[string]types.AttributeValue)
 	for k, v := range input.Item {
 		originalItem[k] = v
 	}
@@ -62,12 +61,12 @@ func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemI
 
 	input.Item = encryptedItem
 
-	return ec.client.PutItemWithContext(ctx, input)
+	return ec.client.PutItem(ctx, input)
 }
 
 // GetItem retrieves an item from a DynamoDB table and decrypts it.
 func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-	output, err := ec.client.GetItemWithContext(ctx, input)
+	output, err := ec.client.GetItem(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +88,8 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 	return output, nil
 }
 
-func (ec *EncryptedClient) encryptAttributes(ctx context.Context, item map[string]*dynamodb.AttributeValue) (map[string]*dynamodb.AttributeValue, error) {
-	encryptedItem := make(map[string]*dynamodb.AttributeValue)
+func (ec *EncryptedClient) encryptAttributes(ctx context.Context, item map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+	encryptedItem := make(map[string]types.AttributeValue)
 
 	for attributeName, attributeValue := range item {
 		encryptedAttributeValue, err := ec.materialsProvider.EncryptAttribute(ctx, attributeName, attributeValue)
@@ -103,8 +102,8 @@ func (ec *EncryptedClient) encryptAttributes(ctx context.Context, item map[strin
 	return encryptedItem, nil
 }
 
-func (ec *EncryptedClient) decryptAttributes(ctx context.Context, item map[string]*dynamodb.AttributeValue) (map[string]*dynamodb.AttributeValue, error) {
-	decryptedItem := make(map[string]*dynamodb.AttributeValue)
+func (ec *EncryptedClient) decryptAttributes(ctx context.Context, item map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+	decryptedItem := make(map[string]types.AttributeValue)
 
 	for attributeName, attributeValue := range item {
 		decryptedAttributeValue, err := ec.materialsProvider.DecryptAttribute(ctx, attributeName, attributeValue)
