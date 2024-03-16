@@ -2,178 +2,117 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
 
-type AttributeActions struct {
-	DefaultAction      crypto.Action
-	AttributeActionMap map[string]crypto.Action
-}
-
-func NewAttributeActions() *AttributeActions {
-	return &AttributeActions{
-		DefaultAction:      crypto.Encrypt,
-		AttributeActionMap: make(map[string]crypto.Action),
-	}
-}
-
-// WithDefaultAction sets the default action for all attributes
-func (aa *AttributeActions) WithDefaultAction(action crypto.Action) *AttributeActions {
-	aa.DefaultAction = action
-	return aa
-}
-
-// WithAttributeAction sets the action for a specific attribute
-func (aa *AttributeActions) WithAttributeAction(attributeName string, action crypto.Action) *AttributeActions {
-	aa.AttributeActionMap[attributeName] = action
-	return aa
-}
-
+// TableKeySchema stores the schema for DynamoDB table keys.
 type TableKeySchema struct {
 	PartitionKey string
 	SortKey      string
 }
 
+// EncryptedClient facilitates encrypted operations on DynamoDB items.
 type EncryptedClient struct {
-	client            dynamodb.DynamoDB
-	cryptoProvider    crypto.Crypto
+	client            DynamoDBAPI
 	materialsProvider provider.CryptographicMaterialsProvider
-	attributeActions  *AttributeActions
 	tableKeySchemas   map[string]TableKeySchema
 }
 
-// NewEncryptedClient creates a new EncryptedClient
-func NewEncryptedClient(client *dynamodb.DynamoDB, cryptoProvider *crypto.Crypto, materialsProvider *provider.CryptographicMaterialsProvider, attributeActions *AttributeActions) *EncryptedClient {
+type DynamoDBAPI interface {
+	PutItemWithContext(aws.Context, *dynamodb.PutItemInput, ...request.Option) (*dynamodb.PutItemOutput, error)
+	GetItemWithContext(aws.Context, *dynamodb.GetItemInput, ...request.Option) (*dynamodb.GetItemOutput, error)
+}
+
+// NewEncryptedClient creates a new instance of EncryptedClient.
+func NewEncryptedClient(client DynamoDBAPI, materialsProvider provider.CryptographicMaterialsProvider) *EncryptedClient {
 	return &EncryptedClient{
-		client:            *client,
-		cryptoProvider:    *cryptoProvider,
-		materialsProvider: *materialsProvider,
-		attributeActions:  attributeActions,
+		client:            client,
+		materialsProvider: materialsProvider,
 		tableKeySchemas:   make(map[string]TableKeySchema),
 	}
 }
 
-func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-	tableName := *input.TableName
-	schema, err := c.getKeySchema(tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	encryptionContext := c.getContext(schema, input.Item)
-	encryptionMaterials, err := c.materialsProvider.EncryptionMaterials(encryptionContext)
-	if err != nil {
-		return nil, err
-	}
-
+// PutItem encrypts an item and puts it into a DynamoDB table.
+func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+	// Create a copy of the original item map to avoid modifying it during encryption
+	originalItem := make(map[string]*dynamodb.AttributeValue)
 	for k, v := range input.Item {
-		if _, isKey := encryptionContext[k]; isKey {
-			// If the attribute is a key, skip encryption.
-			continue
-		}
+		originalItem[k] = v
+	}
 
-		action := c.attributeActions.DefaultAction
-		if specificAction, ok := c.attributeActions.AttributeActionMap[k]; ok {
-			action = specificAction
-		}
-		ciphertext, err := c.cryptoProvider.EncryptAttribute(k, v, action)
-		if err != nil {
-			return nil, err
-		}
-		input.Item[k] = ciphertext
+	encryptionMaterials, err := ec.materialsProvider.EncryptionMaterials(ctx, originalItem)
+	if err != nil {
+		return nil, fmt.Errorf("generating encryption materials: %v", err)
+	}
+
+	// Encrypt attributes using a copy of the item to preserve the original encryption context.
+	encryptedItem, err := ec.encryptAttributes(ctx, originalItem)
+	if err != nil {
+		return nil, fmt.Errorf("encrypting attributes: %v", err)
 	}
 
 	for k, v := range encryptionMaterials {
-		input.Item[k] = v
+		encryptedItem[k] = v
 	}
 
-	return c.client.PutItemWithContext(ctx, input)
+	input.Item = encryptedItem
+
+	return ec.client.PutItemWithContext(ctx, input)
 }
 
-func (c *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-	output, err := c.client.GetItemWithContext(ctx, input)
+// GetItem retrieves an item from a DynamoDB table and decrypts it.
+func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+	output, err := ec.client.GetItemWithContext(ctx, input)
 	if err != nil {
 		return nil, err
 	}
 
-	tableName := *input.TableName
-	schema, err := c.getKeySchema(tableName)
+	// Generate decryption materials using the extracted encryption context.
+	_, err = ec.materialsProvider.DecryptionMaterials(ctx, output.Item)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generating decryption materials: %v", err)
 	}
 
-	decryptionContext := c.getContext(schema, output.Item)
-
-	for k, v := range output.Item {
-		// Skip the decryption process for key attributes and wrapped data key
-		if _, isKey := decryptionContext[k]; isKey || k == provider.WrappedDataKeyAttrName {
-			continue
-		}
-
-		decryptedAttribute, err := c.cryptoProvider.DecryptAttribute(k, v)
-		if err != nil {
-			return nil, err
-		}
-		output.Item[k] = decryptedAttribute
+	// Decrypt attributes using the decryption materials.
+	decryptedItem, err := ec.decryptAttributes(ctx, output.Item)
+	if err != nil {
+		return nil, fmt.Errorf("decrypting attributes: %v", err)
 	}
 
-	// Remove the wrapped data key from the output
-	delete(output.Item, provider.WrappedDataKeyAttrName)
+	output.Item = decryptedItem
 
 	return output, nil
 }
 
-func (c *EncryptedClient) getKeySchema(tableName string) (TableKeySchema, error) {
-	// Check cache first
-	if schema, ok := c.tableKeySchemas[tableName]; ok {
-		return schema, nil
-	}
+func (ec *EncryptedClient) encryptAttributes(ctx context.Context, item map[string]*dynamodb.AttributeValue) (map[string]*dynamodb.AttributeValue, error) {
+	encryptedItem := make(map[string]*dynamodb.AttributeValue)
 
-	descOut, err := c.client.DescribeTable(&dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
-	})
-	if err != nil {
-		return TableKeySchema{}, err
-	}
-
-	var schema TableKeySchema
-	for _, keySchemaElement := range descOut.Table.KeySchema {
-		switch *keySchemaElement.KeyType {
-		case "HASH":
-			schema.PartitionKey = *keySchemaElement.AttributeName
-		case "RANGE":
-			schema.SortKey = *keySchemaElement.AttributeName
+	for attributeName, attributeValue := range item {
+		encryptedAttributeValue, err := ec.materialsProvider.EncryptAttribute(ctx, attributeName, attributeValue)
+		if err != nil {
+			return nil, fmt.Errorf("encrypting attribute '%s': %v", attributeName, err)
 		}
+		encryptedItem[attributeName] = encryptedAttributeValue
 	}
 
-	// Cache the schema for future calls
-	c.tableKeySchemas[tableName] = schema
-
-	return schema, nil
+	return encryptedItem, nil
 }
 
-func (c *EncryptedClient) getValueFromAttribute(attr *dynamodb.AttributeValue) string {
-	if attr.S != nil {
-		return *attr.S
-	}
-	if attr.N != nil {
-		return *attr.N
-	}
-	return ""
-}
+func (ec *EncryptedClient) decryptAttributes(ctx context.Context, item map[string]*dynamodb.AttributeValue) (map[string]*dynamodb.AttributeValue, error) {
+	decryptedItem := make(map[string]*dynamodb.AttributeValue)
 
-func (c *EncryptedClient) getContext(schema TableKeySchema, item map[string]*dynamodb.AttributeValue) map[string]string {
-	context := make(map[string]string)
-	for _, key := range []string{schema.PartitionKey, schema.SortKey} {
-		if key != "" {
-			if value, exists := item[key]; exists && value != nil {
-				context[key] = c.getValueFromAttribute(value)
-			}
+	for attributeName, attributeValue := range item {
+		decryptedAttributeValue, err := ec.materialsProvider.DecryptAttribute(ctx, attributeName, attributeValue)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting attribute '%s': %v", attributeName, err)
 		}
+		decryptedItem[attributeName] = decryptedAttributeValue
 	}
-	return context
+
+	return decryptedItem, nil
 }

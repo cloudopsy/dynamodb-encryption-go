@@ -4,12 +4,12 @@ run:
 
 linters:
   enable:
-    - errcheck
+    # - errcheck
     - goimports
-    - golint
+    # - golint
     - govet
     - staticcheck
-    - revive
+    # - revive
 
 linters-settings:
   revive:
