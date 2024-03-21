@@ -81,11 +81,9 @@ func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput
 		return nil, fmt.Errorf("error querying encrypted items: %v", err)
 	}
 
-	tableName := *input.TableName
-
 	// Decrypt the items in the response
 	for i, item := range encryptedOutput.Items {
-		decryptedItem, decryptErr := ec.decryptItem(ctx, tableName, item)
+		decryptedItem, decryptErr := ec.decryptItem(ctx, *input.TableName, item)
 		if decryptErr != nil {
 			return nil, decryptErr
 		}
@@ -102,11 +100,9 @@ func (ec *EncryptedClient) Scan(ctx context.Context, input *dynamodb.ScanInput) 
 		return nil, fmt.Errorf("error scanning encrypted items: %v", err)
 	}
 
-	tableName := *input.TableName
-
 	// Decrypt the items in the response
 	for i, item := range encryptedOutput.Items {
-		decryptedItem, decryptErr := ec.decryptItem(ctx, tableName, item)
+		decryptedItem, decryptErr := ec.decryptItem(ctx, *input.TableName, item)
 		if decryptErr != nil {
 			return nil, decryptErr
 		}
@@ -275,8 +271,7 @@ func (ec *EncryptedClient) constructMaterialName(item map[string]types.Attribute
 		sortKeyValue = item[pkInfo.SortKey].(*types.AttributeValueMemberS).Value
 	}
 
-	// rawMaterialName := pkInfo.TableName + "-" + partitionKeyValue
-	rawMaterialName := partitionKeyValue
+	rawMaterialName := pkInfo.Table + "-" + partitionKeyValue
 	if sortKeyValue != "" {
 		rawMaterialName += "-" + sortKeyValue
 	}

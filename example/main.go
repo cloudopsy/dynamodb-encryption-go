@@ -92,6 +92,73 @@ func main() {
 	}
 
 	fmt.Printf("Decrypted item: %v\n", result.Item)
+
+	// Scan demonstration
+	scanInput := &dynamodb.ScanInput{
+		TableName: &tableName,
+	}
+
+	scanResult, err := ec.Scan(ctx, scanInput)
+	if err != nil {
+		log.Fatalf("Failed to scan and decrypt items: %v", err)
+	}
+	fmt.Printf("Decrypted scan results: %v\n", scanResult.Items)
+
+	// Query demonstration
+	// Assuming 'UserID' is your partition key.
+	queryInput := &dynamodb.QueryInput{
+		TableName:              aws.String(tableName),
+		KeyConditionExpression: aws.String("UserID = :userID"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":userID": &types.AttributeValueMemberS{Value: "user1"},
+		},
+	}
+
+	queryResult, err := ec.Query(ctx, queryInput)
+	if err != nil {
+		log.Fatalf("Failed to query and decrypt items: %v", err)
+	}
+	fmt.Printf("Decrypted query results: %v\n", queryResult.Items)
+
+	// BatchWriteItem demonstration
+	batchGetItemInput := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]types.KeysAndAttributes{
+			tableName: {
+				Keys: []map[string]types.AttributeValue{
+					{
+						"UserID": &types.AttributeValueMemberS{Value: "user1"},
+					},
+				},
+			},
+		},
+	}
+	batchGetItemResult, err := ec.BatchGetItem(ctx, batchGetItemInput)
+	if err != nil {
+		log.Fatalf("Failed to batch get and decrypt items: %v", err)
+	}
+	fmt.Printf("Decrypted batch get items: %v\n", batchGetItemResult.Responses[tableName])
+
+	batchWriteItemInput := &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]types.WriteRequest{
+			tableName: {
+				{
+					PutRequest: &types.PutRequest{
+						Item: map[string]types.AttributeValue{
+							"UserID":   &types.AttributeValueMemberS{Value: "user2"},
+							"Username": &types.AttributeValueMemberS{Value: "anotherUser"},
+							"Password": &types.AttributeValueMemberS{Value: "anotherPassword123"},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = ec.BatchWriteItem(ctx, batchWriteItemInput)
+	if err != nil {
+		log.Fatalf("Failed to batch write (put/delete) encrypted items: %v", err)
+	}
+	fmt.Println("Encrypted items batch written successfully.")
+
 }
 
 func createTableIfNotExists(ctx context.Context, client *dynamodb.Client, tableName string) error {

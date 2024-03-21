@@ -14,6 +14,7 @@ import (
 
 // PrimaryKeyInfo holds information about the primary key of a DynamoDB table.
 type PrimaryKeyInfo struct {
+	Table        string
 	PartitionKey string
 	SortKey      string
 }
@@ -28,6 +29,7 @@ func TableInfo(ctx context.Context, client *dynamodb.Client, tableName string) (
 	}
 
 	pkInfo := &PrimaryKeyInfo{}
+	pkInfo.Table = tableName
 
 	for _, keySchema := range resp.Table.KeySchema {
 		if keySchema.KeyType == "HASH" {
