@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
-	"log"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -15,8 +15,8 @@ import (
 type EncryptedClient struct {
 	client            *dynamodb.Client
 	materialsProvider provider.CryptographicMaterialsProvider
-	primaryKeyInfo    *utils.PrimaryKeyInfo
 	primaryKeyCache   map[string]*utils.PrimaryKeyInfo
+	lock              sync.RWMutex
 }
 
 // NewEncryptedClient creates a new instance of EncryptedClient.
@@ -24,69 +24,17 @@ func NewEncryptedClient(client *dynamodb.Client, materialsProvider provider.Cryp
 	return &EncryptedClient{
 		client:            client,
 		materialsProvider: materialsProvider,
-		primaryKeyInfo:    nil,
 		primaryKeyCache:   make(map[string]*utils.PrimaryKeyInfo),
+		lock:              sync.RWMutex{},
 	}
 }
 
 // PutItem encrypts an item and puts it into a DynamoDB table.
 func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-	tableName := *input.TableName
-
-	// Cache check for primary key info
-	pkInfo, ok := ec.primaryKeyCache[tableName]
-	if !ok {
-		var err error
-		pkInfo, err = ec.getPrimaryKeyInfo(ctx, tableName)
-		if err != nil {
-			return nil, fmt.Errorf("error fetching primary key info: %v", err)
-		}
-	}
-	partitionKeyValue := input.Item[pkInfo.PartitionKey].(*types.AttributeValueMemberS).Value
-	var sortKeyValue string
-	if pkInfo.SortKey != "" && input.Item[pkInfo.SortKey] != nil {
-		sortKeyValue = input.Item[pkInfo.SortKey].(*types.AttributeValueMemberS).Value
-	}
-
-	// Construct and hash the material name
-	rawMaterialName := tableName + "-" + partitionKeyValue
-	if sortKeyValue != "" {
-		rawMaterialName += "-" + sortKeyValue
-	}
-
-	materialName := utils.HashString(rawMaterialName)
-
-	// Generate and store new material
-	encryptionMaterials, err := ec.materialsProvider.EncryptionMaterials(context.Background(), materialName)
+	// Encrypt the item, excluding primary keys
+	encryptedItem, err := ec.encryptItem(ctx, *input.TableName, input.Item)
 	if err != nil {
-		log.Fatalf("Failed to generate encryption materials: %v", err)
-	}
-
-	// Create a new item map to hold encrypted attributes
-	encryptedItem := make(map[string]types.AttributeValue)
-
-	// Encrypt attribute values, excluding primary keys
-	for key, value := range input.Item {
-		if key == pkInfo.PartitionKey || key == pkInfo.SortKey {
-			// Copy primary key attributes as is
-			encryptedItem[key] = value
-			continue
-		}
-
-		// Convert attribute value to bytes
-		rawData, err := utils.AttributeValueToBytes(value)
-		if err != nil {
-			return nil, fmt.Errorf("error converting attribute value to bytes: %v", err)
-		}
-
-		// Encrypt the data
-		encryptedData, err := encryptionMaterials.EncryptionKey().Encrypt(rawData, []byte(key))
-		if err != nil {
-			return nil, fmt.Errorf("error encrypting attribute value: %v", err)
-		}
-
-		// Store the encrypted data as a binary attribute value
-		encryptedItem[key] = &types.AttributeValueMemberB{Value: encryptedData}
+		return nil, fmt.Errorf("failed to encrypt item: %v", err)
 	}
 
 	// Create a new PutItemInput with the encrypted item
@@ -112,59 +60,10 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 		return nil, fmt.Errorf("item not found")
 	}
 
-	tableName := *input.TableName
-
-	// Cache check for primary key info
-	pkInfo, ok := ec.primaryKeyCache[tableName]
-	if !ok {
-		var err error
-		pkInfo, err = ec.getPrimaryKeyInfo(ctx, tableName)
-		if err != nil {
-			return nil, fmt.Errorf("error fetching primary key info: %v", err)
-		}
-	}
-	partitionKeyValue := input.Key[pkInfo.PartitionKey].(*types.AttributeValueMemberS).Value
-	var sortKeyValue string
-	if pkInfo.SortKey != "" && input.Key[pkInfo.SortKey] != nil {
-		sortKeyValue = input.Key[pkInfo.SortKey].(*types.AttributeValueMemberS).Value
-	}
-
-	// Construct and hash the material name
-	rawMaterialName := tableName + "-" + partitionKeyValue
-	if sortKeyValue != "" {
-		rawMaterialName += "-" + sortKeyValue
-	}
-
-	materialName := utils.HashString(rawMaterialName)
-
-	// Fetch decryption materials
-	decryptionMaterials, err := ec.materialsProvider.DecryptionMaterials(ctx, materialName, 0)
+	// Decrypt the item, excluding primary keys
+	decryptedItem, err := ec.decryptItem(ctx, *input.TableName, encryptedOutput.Item)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch decryption materials: %v", err)
-	}
-
-	// Decrypt each attribute value, excluding primary keys
-	decryptedItem := make(map[string]types.AttributeValue)
-	for key, value := range encryptedOutput.Item {
-		if key == pkInfo.PartitionKey || key == pkInfo.SortKey {
-			// Copy primary key attributes as is
-			decryptedItem[key] = value
-			continue
-		}
-
-		// Decrypt the data
-		rawData, err := decryptionMaterials.DecryptionKey().Decrypt(value.(*types.AttributeValueMemberB).Value, []byte(key))
-		if err != nil {
-			return nil, fmt.Errorf("error decrypting attribute value: %v", err)
-		}
-
-		// Convert bytes back to AttributeValue
-		decryptedValue, err := utils.BytesToAttributeValue(rawData)
-		if err != nil {
-			return nil, fmt.Errorf("error converting bytes to attribute value: %v", err)
-		}
-
-		decryptedItem[key] = decryptedValue
+		return nil, fmt.Errorf("failed to decrypt item: %v", err)
 	}
 
 	// Create a new GetItemOutput with the decrypted item
@@ -175,20 +74,212 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 	return decryptedOutput, nil
 }
 
-func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName string) (*utils.PrimaryKeyInfo, error) {
-	if ec.primaryKeyInfo != nil {
-		return ec.primaryKeyInfo, nil
+// Query executes a Query operation on DynamoDB and decrypts the returned items.
+func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+	encryptedOutput, err := ec.client.Query(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("error querying encrypted items: %v", err)
 	}
 
-	// Fetch the table info since it's not yet cached
+	tableName := *input.TableName
+
+	// Decrypt the items in the response
+	for i, item := range encryptedOutput.Items {
+		decryptedItem, decryptErr := ec.decryptItem(ctx, tableName, item)
+		if decryptErr != nil {
+			return nil, decryptErr
+		}
+		encryptedOutput.Items[i] = decryptedItem
+	}
+
+	return encryptedOutput, nil
+}
+
+// Scan executes a Scan operation on DynamoDB and decrypts the returned items.
+func (ec *EncryptedClient) Scan(ctx context.Context, input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
+	encryptedOutput, err := ec.client.Scan(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("error scanning encrypted items: %v", err)
+	}
+
+	tableName := *input.TableName
+
+	// Decrypt the items in the response
+	for i, item := range encryptedOutput.Items {
+		decryptedItem, decryptErr := ec.decryptItem(ctx, tableName, item)
+		if decryptErr != nil {
+			return nil, decryptErr
+		}
+		encryptedOutput.Items[i] = decryptedItem
+	}
+
+	return encryptedOutput, nil
+}
+
+// BatchWriteItem performs batch write operations, encrypting any items to be put.
+func (ec *EncryptedClient) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+	// Iterate over each table's write requests
+	for tableName, writeRequests := range input.RequestItems {
+		for i, writeRequest := range writeRequests {
+			if writeRequest.PutRequest != nil {
+				// Encrypt the item for PutRequest
+				encryptedItem, err := ec.encryptItem(ctx, tableName, writeRequest.PutRequest.Item)
+				if err != nil {
+					return nil, err
+				}
+				input.RequestItems[tableName][i].PutRequest.Item = encryptedItem
+			}
+		}
+	}
+
+	return ec.client.BatchWriteItem(ctx, input)
+}
+
+// BatchGetItem retrieves a batch of items from DynamoDB and decrypts them.
+func (ec *EncryptedClient) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+	encryptedOutput, err := ec.client.BatchGetItem(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("error batch getting encrypted items: %v", err)
+	}
+
+	// Decrypt the items in the response for each table
+	for tableName, result := range encryptedOutput.Responses {
+		for i, item := range result {
+			decryptedItem, decryptErr := ec.decryptItem(ctx, tableName, item)
+			if decryptErr != nil {
+				return nil, decryptErr
+			}
+			encryptedOutput.Responses[tableName][i] = decryptedItem
+		}
+	}
+
+	return encryptedOutput, nil
+}
+
+// getPrimaryKeyInfo lazily loads and caches primary key information in a thread-safe manner.
+func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName string) (*utils.PrimaryKeyInfo, error) {
+	ec.lock.RLock()
+	pkInfo, exists := ec.primaryKeyCache[tableName]
+	ec.lock.RUnlock()
+
+	if exists {
+		return pkInfo, nil
+	}
+
+	ec.lock.Lock()
+	defer ec.lock.Unlock()
+
+	pkInfo, exists = ec.primaryKeyCache[tableName]
+	if exists {
+		return pkInfo, nil
+	}
+
 	pkInfo, err := utils.TableInfo(ctx, ec.client, tableName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Cache the table info for future use
-	ec.primaryKeyInfo = pkInfo
 	ec.primaryKeyCache[tableName] = pkInfo
 
 	return pkInfo, nil
+}
+
+// encryptItem encrypts a DynamoDB item's attributes, excluding primary keys.
+func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, item map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+	// Fetch primary key info to exclude these attributes from encryption
+	pkInfo, err := ec.getPrimaryKeyInfo(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate and fetch encryption materials
+	materialName := ec.constructMaterialName(item, pkInfo)
+	encryptionMaterials, err := ec.materialsProvider.EncryptionMaterials(ctx, materialName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch encryption materials: %v", err)
+	}
+
+	encryptedItem := make(map[string]types.AttributeValue)
+	for key, value := range item {
+		// Exclude primary keys from encryption
+		if key == pkInfo.PartitionKey || key == pkInfo.SortKey {
+			encryptedItem[key] = value
+			continue
+		}
+
+		rawData, err := utils.AttributeValueToBytes(value)
+		if err != nil {
+			return nil, fmt.Errorf("error converting attribute value to bytes: %v", err)
+		}
+
+		encryptedData, err := encryptionMaterials.EncryptionKey().Encrypt(rawData, []byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("error encrypting attribute value: %v", err)
+		}
+
+		encryptedItem[key] = &types.AttributeValueMemberB{Value: encryptedData}
+	}
+
+	return encryptedItem, nil
+}
+
+// decryptItem decrypts a DynamoDB item's attributes, excluding primary keys.
+func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, item map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+	// Fetch primary key info to identify these attributes
+	pkInfo, err := ec.getPrimaryKeyInfo(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Construct the material name based on primary keys
+	materialName := ec.constructMaterialName(item, pkInfo)
+	decryptionMaterials, err := ec.materialsProvider.DecryptionMaterials(ctx, materialName, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch decryption materials: %v", err)
+	}
+
+	decryptedItem := make(map[string]types.AttributeValue)
+	for key, value := range item {
+		// Copy primary key attributes as is
+		if key == pkInfo.PartitionKey || key == pkInfo.SortKey {
+			decryptedItem[key] = value
+			continue
+		}
+
+		encryptedData, ok := value.(*types.AttributeValueMemberB)
+		if !ok {
+			return nil, fmt.Errorf("expected binary data for encrypted attribute value")
+		}
+
+		rawData, err := decryptionMaterials.DecryptionKey().Decrypt(encryptedData.Value, []byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting attribute value: %v", err)
+		}
+
+		decryptedValue, err := utils.BytesToAttributeValue(rawData)
+		if err != nil {
+			return nil, fmt.Errorf("error converting bytes to attribute value: %v", err)
+		}
+
+		decryptedItem[key] = decryptedValue
+	}
+
+	return decryptedItem, nil
+}
+
+// constructMaterialName constructs a material name based on an item's primary key.
+func (ec *EncryptedClient) constructMaterialName(item map[string]types.AttributeValue, pkInfo *utils.PrimaryKeyInfo) string {
+	partitionKeyValue := item[pkInfo.PartitionKey].(*types.AttributeValueMemberS).Value
+	sortKeyValue := ""
+	if pkInfo.SortKey != "" && item[pkInfo.SortKey] != nil {
+		sortKeyValue = item[pkInfo.SortKey].(*types.AttributeValueMemberS).Value
+	}
+
+	// rawMaterialName := pkInfo.TableName + "-" + partitionKeyValue
+	rawMaterialName := partitionKeyValue
+	if sortKeyValue != "" {
+		rawMaterialName += "-" + sortKeyValue
+	}
+
+	return utils.HashString(rawMaterialName)
 }
