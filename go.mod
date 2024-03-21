@@ -3,7 +3,7 @@ module github.com/cloudopsy/dynamodb-encryption-go
 go 1.21.7
 
 require (
-	github.com/aws/aws-sdk-go v1.50.36 // indirect
+	github.com/aws/aws-sdk-go v1.51.4 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.26.0 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.27.8 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.8 // indirect
@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.30.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.31.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.11.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.9.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.6 // indirect

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -50,53 +51,45 @@ func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemI
 		return nil, fmt.Errorf("generating encryption materials: %v", err)
 	}
 
-<<<<<<< HEAD
-		switch action {
-		case CryptoActionEncrypt:
-			attributeBytes, err := utils.AttributeValueToBytes(v)
-			if err != nil {
-				return nil, err
-			}
-
-			ciphertext, err := c.cryptoProvider.Encrypt(attributeBytes, []byte(k)) // Assuming `k` is used as associated data.
-			if err != nil {
-				return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
-			}
-
-			encryptedAttributeValue, err := utils.BytesToAttributeValue(ciphertext)
-			if err != nil {
-				return nil, err
-			}
-			encryptedItem[k] = encryptedAttributeValue
-
-		case CryptoActionEncryptDeterministically:
-			attributeBytes, err := utils.AttributeValueToBytes(v)
-			if err != nil {
-				return nil, err
-			}
-
-			ciphertext, err := c.cryptoProvider.EncryptDeterministically(attributeBytes, []byte(k))
-			if err != nil {
-				return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
-			}
-
-			encryptedAttributeValue, err := utils.BytesToAttributeValue(ciphertext)
-			if err != nil {
-				return nil, err
-			}
-			encryptedItem[k] = encryptedAttributeValue
-		case CryptoActionSign:
-			// TODO: Implement signing logic
-			encryptedItem[k] = v
-		case CryptoActionDoNothing:
-			encryptedItem[k] = v
+	switch action {
+	case CryptoActionEncrypt:
+		attributeBytes, err := utils.AttributeValueToBytes(v)
+		if err != nil {
+			return nil, err
 		}
-=======
-	// Encrypt attributes using a copy of the item to preserve the original encryption context.
-	encryptedItem, err := ec.encryptAttributes(ctx, originalItem)
-	if err != nil {
-		return nil, fmt.Errorf("encrypting attributes: %v", err)
->>>>>>> 8f215692218746a35cf2f8ab7c1b1f091dd09197
+
+		ciphertext, err := c.cryptoProvider.Encrypt(attributeBytes, []byte(k)) // Assuming `k` is used as associated data.
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
+		}
+
+		encryptedAttributeValue, err := utils.BytesToAttributeValue(ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		encryptedItem[k] = encryptedAttributeValue
+
+	case CryptoActionEncryptDeterministically:
+		attributeBytes, err := utils.AttributeValueToBytes(v)
+		if err != nil {
+			return nil, err
+		}
+
+		ciphertext, err := c.cryptoProvider.EncryptDeterministically(attributeBytes, []byte(k))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
+		}
+
+		encryptedAttributeValue, err := utils.BytesToAttributeValue(ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		encryptedItem[k] = encryptedAttributeValue
+	case CryptoActionSign:
+		// TODO: Implement signing logic
+		encryptedItem[k] = v
+	case CryptoActionDoNothing:
+		encryptedItem[k] = v
 	}
 
 	for k, v := range encryptionMaterials {
@@ -125,7 +118,6 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 		return nil, fmt.Errorf("generating decryption materials: %v", err)
 	}
 
-<<<<<<< HEAD
 	// Create the decryption context based on the key attributes
 	decryptionContext := make(map[string]string)
 	if partitionKeyValue, ok := output.Item[schema.PartitionKey]; ok && partitionKeyValue != nil {
@@ -203,12 +195,6 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 		} else {
 			decryptedItem[k] = v
 		}
-=======
-	// Decrypt attributes using the decryption materials.
-	decryptedItem, err := ec.decryptAttributes(ctx, output.Item)
-	if err != nil {
-		return nil, fmt.Errorf("decrypting attributes: %v", err)
->>>>>>> 8f215692218746a35cf2f8ab7c1b1f091dd09197
 	}
 
 	output.Item = decryptedItem

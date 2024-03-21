@@ -57,7 +57,6 @@ func (dk *TinkDelegatedKey) Algorithm() string {
 }
 
 func (dk *TinkDelegatedKey) AllowedForRawMaterials() bool {
-	// Implement logic based on your application's requirements.
 	return true
 }
 

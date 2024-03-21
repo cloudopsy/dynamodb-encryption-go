@@ -1,7 +1,6 @@
 package provider
 
 import (
-<<<<<<< HEAD
 	"fmt"
 
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
@@ -56,17 +55,4 @@ func (p *CryptographicMaterialsProvider) DecryptionMaterials(encryptedMaterials 
 	}
 
 	return decryptionContext, nil
-=======
-	"context"
-
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-)
-
-// CryptographicMaterialsProvider is an interface for handling cryptographic materials.
-type CryptographicMaterialsProvider interface {
-	EncryptionMaterials(ctx context.Context, encryptionContext map[string]types.AttributeValue) (map[string]types.AttributeValue, error)
-	DecryptionMaterials(ctx context.Context, encryptionContext map[string]types.AttributeValue) (map[string]types.AttributeValue, error)
-	EncryptAttribute(ctx context.Context, attributeName string, attributeValue types.AttributeValue) (types.AttributeValue, error)
-	DecryptAttribute(ctx context.Context, attributeName string, encryptedValue types.AttributeValue) (types.AttributeValue, error)
->>>>>>> 8f215692218746a35cf2f8ab7c1b1f091dd09197
 }
