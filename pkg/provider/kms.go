@@ -89,3 +89,7 @@ func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.C
 	// Construct DecryptionMaterials with the actual delegatedKey
 	return materials.NewDecryptionMaterials(materialDescMap, delegatedKey, nil), nil
 }
+
+func (p *AwsKmsCryptographicMaterialsProvider) TableName() string {
+	return p.MaterialStore.TableName
+}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/utils"
 )
@@ -152,6 +153,62 @@ func (ec *EncryptedClient) BatchGetItem(ctx context.Context, input *dynamodb.Bat
 	return encryptedOutput, nil
 }
 
+// DeleteItem deletes an item and its associated metadata from a DynamoDB table.
+func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+	// First, delete the item from DynamoDB
+	deleteOutput, err := ec.client.DeleteItem(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("error deleting encrypted item: %v", err)
+	}
+
+	// Determine the material name or metadata identifier
+	pkInfo, err := ec.getPrimaryKeyInfo(ctx, *input.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching primary key info: %v", err)
+	}
+
+	// Construct material name based on the primary key of the item being deleted
+	materialName := ec.constructMaterialName(input.Key, pkInfo)
+
+	// Delete the associated metadata
+	tableName := ec.materialsProvider.TableName()
+	queryInput := &dynamodb.QueryInput{
+		TableName:              aws.String(tableName),
+		KeyConditionExpression: aws.String("MaterialName = :materialName"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":materialName": &types.AttributeValueMemberS{Value: materialName},
+		},
+	}
+
+	queryOutput, err := ec.client.Query(ctx, queryInput)
+	if err != nil {
+		return nil, fmt.Errorf("error querying for versions: %v", err)
+	}
+
+	for _, item := range queryOutput.Items {
+		deleteRequest := map[string][]types.WriteRequest{
+			tableName: {
+				{
+					DeleteRequest: &types.DeleteRequest{
+						Key: map[string]types.AttributeValue{
+							"MaterialName": item["MaterialName"],
+							"Version":      item["Version"],
+						},
+					},
+				},
+			},
+		}
+
+		batchWriteInput := &dynamodb.BatchWriteItemInput{RequestItems: deleteRequest}
+		_, err = ec.client.BatchWriteItem(ctx, batchWriteInput)
+		if err != nil {
+			return nil, fmt.Errorf("error deleting a version: %v", err)
+		}
+	}
+
+	return deleteOutput, nil
+}
+
 // getPrimaryKeyInfo lazily loads and caches primary key information in a thread-safe manner.
 func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName string) (*utils.PrimaryKeyInfo, error) {
 	ec.lock.RLock()
@@ -221,7 +278,6 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 
 // decryptItem decrypts a DynamoDB item's attributes, excluding primary keys.
 func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, item map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
-	// Fetch primary key info to identify these attributes
 	pkInfo, err := ec.getPrimaryKeyInfo(ctx, tableName)
 	if err != nil {
 		return nil, err

@@ -159,6 +159,19 @@ func main() {
 	}
 	fmt.Println("Encrypted items batch written successfully.")
 
+	deleteItem := &dynamodb.DeleteItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			"UserID": &types.AttributeValueMemberS{Value: "user2"},
+		},
+	}
+
+	_, err = ec.DeleteItem(ctx, deleteItem)
+	if err != nil {
+		log.Fatalf("Failed to delete encrypted item: %v", err)
+	}
+	fmt.Println("Encrypted item deleted successfully.")
+
 }
 
 func createTableIfNotExists(ctx context.Context, client *dynamodb.Client, tableName string) error {
