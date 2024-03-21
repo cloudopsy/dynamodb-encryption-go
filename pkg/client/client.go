@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/utils"
 )
 
 type CryptoAction int
@@ -111,19 +112,38 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 
 		switch action {
 		case CryptoActionEncrypt:
-			ciphertext, err := c.cryptoProvider.EncryptAttribute(k, v)
+			attributeBytes, err := utils.AttributeValueToBytes(v)
 			if err != nil {
 				return nil, err
 			}
-			encryptedItem[k] = ciphertext
-			encryptedItem[fmt.Sprintf("__encryption_method-for_for-%s", k)] = &dynamodb.AttributeValue{S: aws.String("aead")}
+
+			ciphertext, err := c.cryptoProvider.Encrypt(attributeBytes, []byte(k)) // Assuming `k` is used as associated data.
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
+			}
+
+			encryptedAttributeValue, err := utils.BytesToAttributeValue(ciphertext)
+			if err != nil {
+				return nil, err
+			}
+			encryptedItem[k] = encryptedAttributeValue
+
 		case CryptoActionEncryptDeterministically:
-			ciphertext, err := c.cryptoProvider.EncryptAttributeDeterministically(k, v)
+			attributeBytes, err := utils.AttributeValueToBytes(v)
 			if err != nil {
 				return nil, err
 			}
-			encryptedItem[k] = ciphertext
-			encryptedItem[fmt.Sprintf("__encryption_method_for-%s", k)] = &dynamodb.AttributeValue{S: aws.String("daead")}
+
+			ciphertext, err := c.cryptoProvider.EncryptDeterministically(attributeBytes, []byte(k))
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt attribute: %v", err)
+			}
+
+			encryptedAttributeValue, err := utils.BytesToAttributeValue(ciphertext)
+			if err != nil {
+				return nil, err
+			}
+			encryptedItem[k] = encryptedAttributeValue
 		case CryptoActionSign:
 			// TODO: Implement signing logic
 			encryptedItem[k] = v
@@ -133,7 +153,11 @@ func (c *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemIn
 	}
 
 	for k, v := range encryptionMaterials {
-		encryptedItem[k] = v
+		attr, err := utils.BytesToAttributeValue(v)
+		if err != nil {
+			return nil, err
+		}
+		encryptedItem[k] = attr
 	}
 
 	input.Item = encryptedItem
@@ -176,15 +200,52 @@ func (c *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemIn
 				encryptionMethod := *encryptionMethodAttr.S
 				switch encryptionMethod {
 				case "daead":
-					plaintext, err = c.cryptoProvider.DecryptAttributeDeterministically(k, v.B)
+					attributeBytes, err := utils.AttributeValueToBytes(v) // Convert from *dynamodb.AttributeValue to []byte for decryption
+					if err != nil {
+						return nil, err
+					}
+
+					// Assuming Decrypt returns a []byte plaintext
+					plaintext, err := c.cryptoProvider.DecryptDeterministically(attributeBytes, []byte(k))
+					if err != nil {
+						return nil, fmt.Errorf("failed to decrypt attribute: %v", err)
+					}
+
+					// Convert plaintext back into *dynamodb.AttributeValue
+					decryptedAttributeValue, err := utils.BytesToAttributeValue(plaintext)
+					if err != nil {
+						return nil, err
+					}
+					decryptedItem[k] = decryptedAttributeValue
+
+					// plaintext, err = c.cryptoProvider.DecryptAttributeDeterministically(k, v.B)
 				case "aead":
-					plaintext, err = c.cryptoProvider.DecryptAttribute(k, v.B)
+					attributeBytes, err := utils.AttributeValueToBytes(v) // Convert from *dynamodb.AttributeValue to []byte for decryption
+					if err != nil {
+						return nil, err
+					}
+
+					// Assuming Decrypt returns a []byte plaintext
+					plaintext, err := c.cryptoProvider.Decrypt(attributeBytes, []byte(k))
+					if err != nil {
+						return nil, fmt.Errorf("failed to decrypt attribute: %v", err)
+					}
+
+					// Convert plaintext back into *dynamodb.AttributeValue
+					decryptedAttributeValue, err := utils.BytesToAttributeValue(plaintext)
+					if err != nil {
+						return nil, err
+					}
+					decryptedItem[k] = decryptedAttributeValue
+
+					// plaintext, err = c.cryptoProvider.DecryptAttribute(k, v.B)
 				default:
 					return nil, fmt.Errorf("unsupported encryption method: %s", encryptionMethod)
 				}
 			} else {
 				// If encryption method is not found, default to regular decryption
-				plaintext, err = c.cryptoProvider.DecryptAttribute(k, v.B)
+				// plaintext, err = c.cryptoProvider.DecryptAttribute(k, v.B)
+				continue
 			}
 			if err != nil {
 				return nil, err

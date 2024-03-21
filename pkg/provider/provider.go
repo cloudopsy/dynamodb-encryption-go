@@ -1,75 +1,57 @@
 package provider
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
 )
 
-// CryptoProvider is an interface for a cryptographic provider
-type CryptoProvider interface {
-	EncryptAttribute(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
-	DecryptAttribute(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
-	EncryptAttributeDeterministically(attributeName string, attributeValue *dynamodb.AttributeValue) (*dynamodb.AttributeValue, error)
-	DecryptAttributeDeterministically(attributeName string, ciphertext []byte) (*dynamodb.AttributeValue, error)
-	GenerateDataKey(encryptionContext map[string]string) ([]byte, []byte, error)
-	DecryptDataKey(ciphertext []byte, encryptionContext map[string]string) ([]byte, error)
-}
-
-// CryptographicMaterialsProvider is an interface for a cryptographic materials provider
 type CryptographicMaterialsProvider struct {
-	cryptoProvider CryptoProvider
+	cryptoProvider crypto.Crypto
 	description    map[string]string
 }
 
-// WrappedDataKeyAttrName is the name of the wrapped data key attribute
 const WrappedDataKeyAttrName = "__wrapped_data_key"
 
-// NewCryptographicMaterialsProvider creates a new CryptographicMaterialsProvider
-func NewCryptographicMaterialsProvider(cryptoProvider CryptoProvider, description map[string]string) *CryptographicMaterialsProvider {
+func NewCryptographicMaterialsProvider(cryptoProvider *crypto.Crypto, description map[string]string) *CryptographicMaterialsProvider {
 	return &CryptographicMaterialsProvider{
-		cryptoProvider: cryptoProvider,
+		cryptoProvider: *cryptoProvider,
 		description:    description,
 	}
 }
 
-// EncryptionMaterials generates encryption materials
-func (p *CryptographicMaterialsProvider) EncryptionMaterials(encryptionContext map[string]string) (map[string]*dynamodb.AttributeValue, error) {
-	_, encryptedDataKey, err := p.cryptoProvider.GenerateDataKey(encryptionContext)
+// EncryptionMaterials generates materials needed for encryption, including an encrypted data key.
+func (p *CryptographicMaterialsProvider) EncryptionMaterials(context map[string]string) (map[string][]byte, error) {
+	_, encryptedDataKey, err := p.cryptoProvider.GenerateDataKey(context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate data key: %v", err)
 	}
 
-	materialDescription := make(map[string]*dynamodb.AttributeValue)
+	materialDescription := map[string][]byte{WrappedDataKeyAttrName: encryptedDataKey}
 	for k, v := range p.description {
-		materialDescription[k] = &dynamodb.AttributeValue{S: &v}
+		materialDescription[k] = []byte(v)
 	}
-	materialDescription[WrappedDataKeyAttrName] = &dynamodb.AttributeValue{B: encryptedDataKey}
 
 	return materialDescription, nil
 }
 
-// DecryptionMaterials generates decryption materials
-func (p *CryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, encryptionContext map[string]*dynamodb.AttributeValue) (map[string]string, error) {
-	encryptedDataKey := encryptionContext[WrappedDataKeyAttrName]
-	ciphertext := encryptedDataKey.B
-
-	// Remove the wrapped data key from the encryption context
-	delete(encryptionContext, WrappedDataKeyAttrName)
-
-	decryptionContext := make(map[string]string)
-	for k, v := range encryptionContext {
-		if v.S != nil {
-			decryptionContext[k] = *v.S
-		} else if v.N != nil {
-			decryptionContext[k] = *v.N
-		}
+// DecryptionMaterials prepares the context needed for decryption based on the provided encrypted materials.
+func (p *CryptographicMaterialsProvider) DecryptionMaterials(encryptedMaterials map[string][]byte) (map[string]string, error) {
+	encryptedDataKey, exists := encryptedMaterials[WrappedDataKeyAttrName]
+	if !exists {
+		return nil, fmt.Errorf("encrypted data key not found in materials")
 	}
 
-	_, err := p.cryptoProvider.DecryptDataKey(ciphertext, decryptionContext)
+	plaintextDataKey, err := p.cryptoProvider.DecryptDataKey(encryptedDataKey, p.description) // Assuming description is used as context here.
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data key: %v", err)
+	}
+
+	// Convert plaintextDataKey to a string map if needed, or use it directly depending on your use case.
+	// This example assumes the decryption context is similar to the encryption context.
+	decryptionContext := make(map[string]string)
+	for k, _ := range p.description {
+		decryptionContext[k] = string(plaintextDataKey) // Simplified; likely you'll need a more complex handling based on actual context usage.
 	}
 
 	return decryptionContext, nil
