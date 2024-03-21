@@ -1,58 +1,12 @@
 package provider
 
 import (
-	"fmt"
+	"context"
 
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/materials"
 )
 
-type CryptographicMaterialsProvider struct {
-	cryptoProvider crypto.Crypto
-	description    map[string]string
-}
-
-const WrappedDataKeyAttrName = "__wrapped_data_key"
-
-func NewCryptographicMaterialsProvider(cryptoProvider *crypto.Crypto, description map[string]string) *CryptographicMaterialsProvider {
-	return &CryptographicMaterialsProvider{
-		cryptoProvider: *cryptoProvider,
-		description:    description,
-	}
-}
-
-// EncryptionMaterials generates materials needed for encryption, including an encrypted data key.
-func (p *CryptographicMaterialsProvider) EncryptionMaterials(context map[string]string) (map[string][]byte, error) {
-	_, encryptedDataKey, err := p.cryptoProvider.GenerateDataKey(context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate data key: %v", err)
-	}
-
-	materialDescription := map[string][]byte{WrappedDataKeyAttrName: encryptedDataKey}
-	for k, v := range p.description {
-		materialDescription[k] = []byte(v)
-	}
-
-	return materialDescription, nil
-}
-
-// DecryptionMaterials prepares the context needed for decryption based on the provided encrypted materials.
-func (p *CryptographicMaterialsProvider) DecryptionMaterials(encryptedMaterials map[string][]byte) (map[string]string, error) {
-	encryptedDataKey, exists := encryptedMaterials[WrappedDataKeyAttrName]
-	if !exists {
-		return nil, fmt.Errorf("encrypted data key not found in materials")
-	}
-
-	plaintextDataKey, err := p.cryptoProvider.DecryptDataKey(encryptedDataKey, p.description) // Assuming description is used as context here.
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data key: %v", err)
-	}
-
-	// Convert plaintextDataKey to a string map if needed, or use it directly depending on your use case.
-	// This example assumes the decryption context is similar to the encryption context.
-	decryptionContext := make(map[string]string)
-	for k, _ := range p.description {
-		decryptionContext[k] = string(plaintextDataKey) // Simplified; likely you'll need a more complex handling based on actual context usage.
-	}
-
-	return decryptionContext, nil
+type CryptographicMaterialsProvider interface {
+	EncryptionMaterials(ctx context.Context, materialName string) (*materials.EncryptionMaterials, error)
+	DecryptionMaterials(ctx context.Context, materialName string, version int64) (*materials.DecryptionMaterials, error)
 }

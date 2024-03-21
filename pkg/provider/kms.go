@@ -18,8 +18,8 @@ type AwsKmsCryptographicMaterialsProvider struct {
 	MaterialStore     *store.KeyMaterialStore
 }
 
-// NewAwsKmsCryptographicMaterialsProvider initializes a provider with the specified AWS KMS key ID and region.
-func NewAwsKmsCryptographicMaterialsProvider(keyID, region string, encryptionContext map[string]string, materialStore *store.KeyMaterialStore) (*AwsKmsCryptographicMaterialsProvider, error) {
+// NewAwsKmsCryptographicMaterialsProvider initializes a provider with the specified AWS KMS key ID, encryption context, and material store.
+func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map[string]string, materialStore *store.KeyMaterialStore) (CryptographicMaterialsProvider, error) {
 
 	return &AwsKmsCryptographicMaterialsProvider{
 		KeyID:             keyID,

@@ -4,72 +4,129 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/cloudopsy/dynamodb-encryption-go/internal/crypto"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider/store"
+)
+
+const (
+	awsRegion         = "eu-west-2"
+	keyURI            = "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
+	dynamoDBTableName = "meta"
 )
 
 func main() {
-	// Initialize an AWS session.
-	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("eu-west-2"))
+	ctx := context.TODO()
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatalf("Failed to load AWS config: %v", err)
+		log.Fatalf("unable to load SDK config, %v", err)
 	}
 
-	// Create a DynamoDB client.
-	dynamodbClient := dynamodb.NewFromConfig(cfg)
+	// Create DynamoDB client
+	dynamoDBClient := dynamodb.NewFromConfig(cfg)
 
-	// Set up the key URI for AWS KMS.
-	keyURI := "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
-
-	// Initialize the AWS KMS Cryptographic Materials Provider with specific options.
-	materialsProvider := provider.NewsCryptographicMaterialsProvider(
-		crypto.WithKMS(keyURI),
-		crypto.WithDefault(crypto.Encrypt),
-		crypto.WithAttribute("email", crypto.EncryptDeterministically),
-		crypto.WithAttribute("id", crypto.DoNothing),
-	)
-
-	// Create an encrypted DynamoDB client using the materials provider.
-	encryptedClient := client.NewEncryptedClient(dynamodbClient, materialsProvider)
-
-	// Define a DynamoDB table name.
-	tableName := "test"
-
-	// Create an example item to put into the DynamoDB table.
-	item := map[string]types.AttributeValue{
-		"id":         &types.AttributeValueMemberS{Value: "001"},
-		"first_name": &types.AttributeValueMemberS{Value: "John"},
-		"last_name":  &types.AttributeValueMemberS{Value: "Doe"},
-		"email":      &types.AttributeValueMemberS{Value: "johndoe@example.com"},
-		"created_at": &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
+	// Initialize the key material store
+	materialStore, err := store.NewKeyMaterialStore(dynamoDBClient, dynamoDBTableName)
+	if err != nil {
+		log.Fatalf("Failed to create key material store: %v", err)
 	}
 
-	// Put the encrypted item into the DynamoDB table.
-	_, err = encryptedClient.PutItem(context.Background(), &dynamodb.PutItemInput{
-		TableName: aws.String(tableName),
-		Item:      item,
-	})
+	// Ensure DynamoDB table exists
+	if err := materialStore.CreateTableIfNotExists(ctx); err != nil {
+		log.Fatalf("Failed to ensure DynamoDB table exists: %v", err)
+	}
+
+	// Initialize the cryptographic materials provider
+	cmp, err := provider.NewAwsKmsCryptographicMaterialsProvider(keyURI, nil, materialStore)
+	if err != nil {
+		log.Fatalf("Failed to create cryptographic materials provider: %v", err)
+	}
+
+	// Initialize EncryptedClient
+	ec := client.NewEncryptedClient(dynamoDBClient, cmp)
+
+	// User credentials to encrypt and store
+	userID := "user1"
+	credentials := map[string]types.AttributeValue{
+		"UserID":   &types.AttributeValueMemberS{Value: userID},
+		"Username": &types.AttributeValueMemberS{Value: "exampleUser"},
+		"Password": &types.AttributeValueMemberS{Value: "examplePassword123"},
+	}
+
+	// DynamoDB table name
+	tableName := "UserCredentials"
+
+	// Attempt to create the table
+	if err := createTableIfNotExists(ctx, dynamoDBClient, tableName); err != nil {
+		log.Fatalf("Error creating table: %v", err)
+	}
+
+	// Put encrypted item
+	putItemInput := &dynamodb.PutItemInput{
+		TableName: &tableName,
+		Item:      credentials,
+	}
+
+	_, err = ec.PutItem(ctx, putItemInput)
 	if err != nil {
 		log.Fatalf("Failed to put encrypted item: %v", err)
 	}
-	fmt.Println("Successfully put encrypted item.")
+	fmt.Println("Encrypted item put successfully.")
 
-	// Retrieve the encrypted item from the DynamoDB table.
-	getItemOutput, err := encryptedClient.GetItem(context.Background(), &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
+	// Get and decrypt item
+	getItemInput := &dynamodb.GetItemInput{
+		TableName: &tableName,
 		Key: map[string]types.AttributeValue{
-			"id": &types.AttributeValueMemberS{Value: "001"},
+			"UserID": &types.AttributeValueMemberS{Value: userID},
 		},
-	})
-	if err != nil {
-		log.Fatalf("Failed to get encrypted item: %v", err)
 	}
-	fmt.Println("Successfully retrieved and decrypted item:", getItemOutput.Item)
+
+	result, err := ec.GetItem(ctx, getItemInput)
+	if err != nil {
+		log.Fatalf("Failed to get and decrypt item: %v", err)
+	}
+
+	fmt.Printf("Decrypted item: %v\n", result.Item)
+}
+
+func createTableIfNotExists(ctx context.Context, client *dynamodb.Client, tableName string) error {
+	_, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(tableName),
+	})
+
+	// If DescribeTable succeeds, the table exists and we return nil.
+	if err == nil {
+		fmt.Println("Table already exists:", tableName)
+		return nil
+	}
+
+	// If the table does not exist, create it.
+	_, err = client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String("UserID"),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String("UserID"),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		BillingMode: types.BillingModePayPerRequest,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create table: %v", err)
+	}
+
+	fmt.Println("Table created successfully:", tableName)
+	return nil
 }

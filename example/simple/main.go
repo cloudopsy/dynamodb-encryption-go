@@ -39,7 +39,7 @@ func main() {
 	}
 
 	// Initialize the cryptographic materials provider
-	cmp, err := provider.NewAwsKmsCryptographicMaterialsProvider(keyURI, awsRegion, nil, materialStore)
+	cmp, err := provider.NewAwsKmsCryptographicMaterialsProvider(keyURI, nil, materialStore)
 	if err != nil {
 		log.Fatalf("Failed to create cryptographic materials provider: %v", err)
 	}
