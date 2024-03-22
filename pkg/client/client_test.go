@@ -183,6 +183,49 @@ func TestEncryptedClient_PutItem(t *testing.T) {
 	mockCMProvider.AssertExpectations(t)
 }
 
+func TestEncryptedClient_PutItem_Failure(t *testing.T) {
+	mockDynamoDBClient := new(MockDynamoDBClient)
+	mockCMProvider := new(MockCryptographicMaterialsProvider)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+
+	// Mock the DescribeTable call to simulate fetching table primary key schema.
+	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
+		Table: &types.TableDescription{
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash},
+				{AttributeName: aws.String("SK"), KeyType: types.KeyTypeRange},
+			},
+		},
+	}, nil)
+
+	// Mock the TableName call if your implementation requires it.
+	mockCMProvider.On("TableName").Return("materials-table").Maybe()
+
+	mockCMProvider.On("EncryptionMaterials", mock.Anything, mock.Anything).Return(materials.NewEncryptionMaterials(
+		map[string]string{"mock": "data"},
+		&MockDelegatedKey{},
+		nil,
+	), nil)
+
+	// Simulate a failure in PutItem operation
+	mockDynamoDBClient.On("PutItem", mock.Anything, mock.AnythingOfType("*dynamodb.PutItemInput"), mock.Anything).Return(&dynamodb.PutItemOutput{}, fmt.Errorf("failed to put item"))
+
+	// Attempt to put an item, expecting failure
+	_, err := encryptedClient.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("test-table"),
+		Item: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: "123"},
+			"SK": &types.AttributeValueMemberS{Value: "TestFailure"},
+		},
+	})
+
+	// Check if error was as expected
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to put item")
+	mockDynamoDBClient.AssertExpectations(t)
+	mockCMProvider.AssertExpectations(t)
+}
+
 func TestEncryptedClient_GetItem_Success(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
