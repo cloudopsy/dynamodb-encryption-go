@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -9,44 +8,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
-
-// PrimaryKeyInfo holds information about the primary key of a DynamoDB table.
-type PrimaryKeyInfo struct {
-	Table        string
-	PartitionKey string
-	SortKey      string
-}
-
-// TableInfo fetches the primary key names of a DynamoDB table.
-func TableInfo(ctx context.Context, client *dynamodb.Client, tableName string) (*PrimaryKeyInfo, error) {
-	resp, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe table: %w", err)
-	}
-
-	pkInfo := &PrimaryKeyInfo{}
-	pkInfo.Table = tableName
-
-	for _, keySchema := range resp.Table.KeySchema {
-		if keySchema.KeyType == "HASH" {
-			pkInfo.PartitionKey = *keySchema.AttributeName
-		} else if keySchema.KeyType == "RANGE" {
-			pkInfo.SortKey = *keySchema.AttributeName
-		}
-	}
-
-	if pkInfo.PartitionKey == "" {
-		return nil, fmt.Errorf("partition key not found for table: %s", tableName)
-	}
-
-	return pkInfo, nil
-}
 
 // HashString takes an input string and returns its SHA256 hash as a hex-encoded string.
 func HashString(input string) string {
@@ -141,29 +104,6 @@ func BytesToAttributeValue(data []byte) (types.AttributeValue, error) {
 		return nil, fmt.Errorf("failed to unmarshal JSON to AttributeValue: %v", err)
 	}
 	return interfaceToAttributeValue(av)
-}
-
-// ConstructMaterialName constructs a material name based on an item's primary key.
-func ConstructMaterialName(item map[string]types.AttributeValue, pkInfo *PrimaryKeyInfo) (string, error) {
-	partitionKeyValue, err := AttributeValueToString(item[pkInfo.PartitionKey])
-	if err != nil {
-		return "", fmt.Errorf("invalid partition key attribute type: %v", err)
-	}
-
-	sortKeyValue := ""
-	if pkInfo.SortKey != "" {
-		sortKeyValue, err = AttributeValueToString(item[pkInfo.SortKey])
-		if err != nil {
-			return "", fmt.Errorf("invalid sort key attribute type: %v", err)
-		}
-	}
-
-	rawMaterialName := pkInfo.Table + "-" + partitionKeyValue
-	if sortKeyValue != "" {
-		rawMaterialName += "-" + sortKeyValue
-	}
-
-	return HashString(rawMaterialName), nil
 }
 
 // attributeValueToInterface converts DynamoDB's types.AttributeValue to a generic interface{}.

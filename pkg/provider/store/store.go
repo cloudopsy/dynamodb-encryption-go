@@ -198,11 +198,11 @@ func (s *KeyMaterialStore) CreateTableIfNotExists(ctx context.Context) error {
 		KeySchema: []types.KeySchemaElement{
 			{
 				AttributeName: aws.String("MaterialName"),
-				KeyType:       types.KeyTypeHash, // Partition key
+				KeyType:       types.KeyTypeHash,
 			},
 			{
 				AttributeName: aws.String("Version"),
-				KeyType:       types.KeyTypeRange, // Sort key
+				KeyType:       types.KeyTypeRange,
 			},
 		},
 		ProvisionedThroughput: &types.ProvisionedThroughput{

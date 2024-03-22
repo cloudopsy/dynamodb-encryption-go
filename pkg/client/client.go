@@ -12,20 +12,38 @@ import (
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/utils"
 )
 
+type DynamoDBClientInterface interface {
+	PutItem(ctx context.Context, input *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	GetItem(ctx context.Context, input *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+	Query(ctx context.Context, input *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	Scan(ctx context.Context, input *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error)
+	BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error)
+	DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
+	DescribeTable(ctx context.Context, input *dynamodb.DescribeTableInput, opts ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
+}
+
+// PrimaryKeyInfo holds information about the primary key of a DynamoDB table.
+type PrimaryKeyInfo struct {
+	Table        string
+	PartitionKey string
+	SortKey      string
+}
+
 // EncryptedClient facilitates encrypted operations on DynamoDB items.
 type EncryptedClient struct {
-	client            *dynamodb.Client
+	client            DynamoDBClientInterface
 	materialsProvider provider.CryptographicMaterialsProvider
-	primaryKeyCache   map[string]*utils.PrimaryKeyInfo
+	primaryKeyCache   map[string]*PrimaryKeyInfo
 	lock              sync.RWMutex
 }
 
 // NewEncryptedClient creates a new instance of EncryptedClient.
-func NewEncryptedClient(client *dynamodb.Client, materialsProvider provider.CryptographicMaterialsProvider) *EncryptedClient {
+func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provider.CryptographicMaterialsProvider) *EncryptedClient {
 	return &EncryptedClient{
 		client:            client,
 		materialsProvider: materialsProvider,
-		primaryKeyCache:   make(map[string]*utils.PrimaryKeyInfo),
+		primaryKeyCache:   make(map[string]*PrimaryKeyInfo),
 		lock:              sync.RWMutex{},
 	}
 }
@@ -162,13 +180,13 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 	}
 
 	// Determine the material name or metadata identifier
-	pkInfo, err := ec.getPrimaryKeyInfo(ctx, *input.TableName)
+	pkInfo, err := ec.getPrimaryKeyInfo(ctx, aws.StringValue(input.TableName))
 	if err != nil {
 		return nil, fmt.Errorf("error fetching primary key info: %v", err)
 	}
 
 	// Construct material name based on the primary key of the item being deleted
-	materialName, err := utils.ConstructMaterialName(input.Key, pkInfo)
+	materialName, err := ConstructMaterialName(input.Key, pkInfo)
 	if err != nil {
 		return nil, fmt.Errorf("error constructing material name: %v", err)
 	}
@@ -213,7 +231,7 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 }
 
 // getPrimaryKeyInfo lazily loads and caches primary key information in a thread-safe manner.
-func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName string) (*utils.PrimaryKeyInfo, error) {
+func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName string) (*PrimaryKeyInfo, error) {
 	ec.lock.RLock()
 	pkInfo, exists := ec.primaryKeyCache[tableName]
 	ec.lock.RUnlock()
@@ -230,7 +248,7 @@ func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName stri
 		return pkInfo, nil
 	}
 
-	pkInfo, err := utils.TableInfo(ctx, ec.client, tableName)
+	pkInfo, err := TableInfo(ctx, ec.client, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +267,7 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 	}
 
 	// Generate and fetch encryption materials
-	materialName, err := utils.ConstructMaterialName(item, pkInfo)
+	materialName, err := ConstructMaterialName(item, pkInfo)
 	if err != nil {
 		return nil, fmt.Errorf("error constructing material name: %v", err)
 	}
@@ -290,7 +308,7 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 	}
 
 	// Construct the material name based on primary keys
-	materialName, err := utils.ConstructMaterialName(item, pkInfo)
+	materialName, err := ConstructMaterialName(item, pkInfo)
 	if err != nil {
 		return nil, fmt.Errorf("error constructing material name: %v", err)
 	}
@@ -326,4 +344,54 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 	}
 
 	return decryptedItem, nil
+}
+
+// TableInfo fetches the primary key names of a DynamoDB table.
+func TableInfo(ctx context.Context, client DynamoDBClientInterface, tableName string) (*PrimaryKeyInfo, error) {
+	resp, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(tableName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe table: %w", err)
+	}
+
+	pkInfo := &PrimaryKeyInfo{}
+	pkInfo.Table = tableName
+
+	for _, keySchema := range resp.Table.KeySchema {
+		if keySchema.KeyType == "HASH" {
+			pkInfo.PartitionKey = *keySchema.AttributeName
+		} else if keySchema.KeyType == "RANGE" {
+			pkInfo.SortKey = *keySchema.AttributeName
+		}
+	}
+
+	if pkInfo.PartitionKey == "" {
+		return nil, fmt.Errorf("partition key not found for table: %s", tableName)
+	}
+
+	return pkInfo, nil
+}
+
+// ConstructMaterialName constructs a material name based on an item's primary key.
+func ConstructMaterialName(item map[string]types.AttributeValue, pkInfo *PrimaryKeyInfo) (string, error) {
+	partitionKeyValue, err := utils.AttributeValueToString(item[pkInfo.PartitionKey])
+	if err != nil {
+		return "", fmt.Errorf("invalid partition key attribute type: %v", err)
+	}
+
+	sortKeyValue := ""
+	if pkInfo.SortKey != "" {
+		sortKeyValue, err = utils.AttributeValueToString(item[pkInfo.SortKey])
+		if err != nil {
+			return "", fmt.Errorf("invalid sort key attribute type: %v", err)
+		}
+	}
+
+	rawMaterialName := pkInfo.Table + "-" + partitionKeyValue
+	if sortKeyValue != "" {
+		rawMaterialName += "-" + sortKeyValue
+	}
+
+	return utils.HashString(rawMaterialName), nil
 }
