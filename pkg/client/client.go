@@ -33,7 +33,7 @@ func NewEncryptedClient(client *dynamodb.Client, materialsProvider provider.Cryp
 // PutItem encrypts an item and puts it into a DynamoDB table.
 func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
 	// Encrypt the item, excluding primary keys
-	encryptedItem, err := ec.encryptItem(ctx, *input.TableName, input.Item)
+	encryptedItem, err := ec.encryptItem(ctx, aws.StringValue(input.TableName), input.Item)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt item: %v", err)
 	}
@@ -62,7 +62,7 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 	}
 
 	// Decrypt the item, excluding primary keys
-	decryptedItem, err := ec.decryptItem(ctx, *input.TableName, encryptedOutput.Item)
+	decryptedItem, err := ec.decryptItem(ctx, aws.StringValue(input.TableName), encryptedOutput.Item)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt item: %v", err)
 	}
@@ -84,7 +84,7 @@ func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput
 
 	// Decrypt the items in the response
 	for i, item := range encryptedOutput.Items {
-		decryptedItem, decryptErr := ec.decryptItem(ctx, *input.TableName, item)
+		decryptedItem, decryptErr := ec.decryptItem(ctx, aws.StringValue(input.TableName), item)
 		if decryptErr != nil {
 			return nil, decryptErr
 		}
@@ -103,7 +103,7 @@ func (ec *EncryptedClient) Scan(ctx context.Context, input *dynamodb.ScanInput) 
 
 	// Decrypt the items in the response
 	for i, item := range encryptedOutput.Items {
-		decryptedItem, decryptErr := ec.decryptItem(ctx, *input.TableName, item)
+		decryptedItem, decryptErr := ec.decryptItem(ctx, aws.StringValue(input.TableName), item)
 		if decryptErr != nil {
 			return nil, decryptErr
 		}
@@ -168,7 +168,10 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 	}
 
 	// Construct material name based on the primary key of the item being deleted
-	materialName := ec.constructMaterialName(input.Key, pkInfo)
+	materialName, err := utils.ConstructMaterialName(input.Key, pkInfo)
+	if err != nil {
+		return nil, fmt.Errorf("error constructing material name: %v", err)
+	}
 
 	// Delete the associated metadata
 	tableName := ec.materialsProvider.TableName()
@@ -246,7 +249,10 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 	}
 
 	// Generate and fetch encryption materials
-	materialName := ec.constructMaterialName(item, pkInfo)
+	materialName, err := utils.ConstructMaterialName(item, pkInfo)
+	if err != nil {
+		return nil, fmt.Errorf("error constructing material name: %v", err)
+	}
 	encryptionMaterials, err := ec.materialsProvider.EncryptionMaterials(ctx, materialName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch encryption materials: %v", err)
@@ -284,7 +290,10 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 	}
 
 	// Construct the material name based on primary keys
-	materialName := ec.constructMaterialName(item, pkInfo)
+	materialName, err := utils.ConstructMaterialName(item, pkInfo)
+	if err != nil {
+		return nil, fmt.Errorf("error constructing material name: %v", err)
+	}
 	decryptionMaterials, err := ec.materialsProvider.DecryptionMaterials(ctx, materialName, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch decryption materials: %v", err)
@@ -317,20 +326,4 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 	}
 
 	return decryptedItem, nil
-}
-
-// constructMaterialName constructs a material name based on an item's primary key.
-func (ec *EncryptedClient) constructMaterialName(item map[string]types.AttributeValue, pkInfo *utils.PrimaryKeyInfo) string {
-	partitionKeyValue := item[pkInfo.PartitionKey].(*types.AttributeValueMemberS).Value
-	sortKeyValue := ""
-	if pkInfo.SortKey != "" && item[pkInfo.SortKey] != nil {
-		sortKeyValue = item[pkInfo.SortKey].(*types.AttributeValueMemberS).Value
-	}
-
-	rawMaterialName := pkInfo.Table + "-" + partitionKeyValue
-	if sortKeyValue != "" {
-		rawMaterialName += "-" + sortKeyValue
-	}
-
-	return utils.HashString(rawMaterialName)
 }

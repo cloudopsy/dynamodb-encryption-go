@@ -3,9 +3,11 @@ package utils
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -53,6 +55,52 @@ func HashString(input string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
+// AttributeValueToString converts a DynamoDB AttributeValue to a string representation.
+func AttributeValueToString(value types.AttributeValue) (string, error) {
+	switch v := value.(type) {
+	case *types.AttributeValueMemberS:
+		return v.Value, nil
+	case *types.AttributeValueMemberN:
+		return v.Value, nil
+	case *types.AttributeValueMemberB:
+		return base64.StdEncoding.EncodeToString(v.Value), nil
+	case *types.AttributeValueMemberBOOL:
+		return strconv.FormatBool(v.Value), nil
+	case *types.AttributeValueMemberNULL:
+		return "", nil
+	case *types.AttributeValueMemberM:
+		m := make(map[string]string)
+		for key, value := range v.Value {
+			convertedValue, err := AttributeValueToString(value)
+			if err != nil {
+				return "", err
+			}
+			m[key] = convertedValue
+		}
+		jsonStr, err := json.Marshal(m)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal map to JSON: %v", err)
+		}
+		return string(jsonStr), nil
+	case *types.AttributeValueMemberL:
+		var l []string
+		for _, listItem := range v.Value {
+			convertedItem, err := AttributeValueToString(listItem)
+			if err != nil {
+				return "", err
+			}
+			l = append(l, convertedItem)
+		}
+		jsonStr, err := json.Marshal(l)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal list to JSON: %v", err)
+		}
+		return string(jsonStr), nil
+	default:
+		return "", fmt.Errorf("unsupported AttributeValue type: %T", value)
+	}
+}
+
 // AttributeValueMapToBytes converts a map of DynamoDB attribute values to a JSON byte slice.
 func AttributeValueMapToBytes(attributes map[string]types.AttributeValue) ([]byte, error) {
 	// DynamoDB attribute values to a generic map interface{}
@@ -93,6 +141,29 @@ func BytesToAttributeValue(data []byte) (types.AttributeValue, error) {
 		return nil, fmt.Errorf("failed to unmarshal JSON to AttributeValue: %v", err)
 	}
 	return interfaceToAttributeValue(av)
+}
+
+// ConstructMaterialName constructs a material name based on an item's primary key.
+func ConstructMaterialName(item map[string]types.AttributeValue, pkInfo *PrimaryKeyInfo) (string, error) {
+	partitionKeyValue, err := AttributeValueToString(item[pkInfo.PartitionKey])
+	if err != nil {
+		return "", fmt.Errorf("invalid partition key attribute type: %v", err)
+	}
+
+	sortKeyValue := ""
+	if pkInfo.SortKey != "" {
+		sortKeyValue, err = AttributeValueToString(item[pkInfo.SortKey])
+		if err != nil {
+			return "", fmt.Errorf("invalid sort key attribute type: %v", err)
+		}
+	}
+
+	rawMaterialName := pkInfo.Table + "-" + partitionKeyValue
+	if sortKeyValue != "" {
+		rawMaterialName += "-" + sortKeyValue
+	}
+
+	return HashString(rawMaterialName), nil
 }
 
 // attributeValueToInterface converts DynamoDB's types.AttributeValue to a generic interface{}.

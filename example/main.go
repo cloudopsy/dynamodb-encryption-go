@@ -162,7 +162,7 @@ func main() {
 	deleteItem := &dynamodb.DeleteItemInput{
 		TableName: &tableName,
 		Key: map[string]types.AttributeValue{
-			"UserID": &types.AttributeValueMemberS{Value: "user2"},
+			"UserID": &types.AttributeValueMemberS{Value: "user1"},
 		},
 	}
 
