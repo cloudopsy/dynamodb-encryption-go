@@ -18,7 +18,7 @@ type EncryptionMaterials struct {
 	signingKey          delegatedkeys.DelegatedKey
 }
 
-func NewEncryptionMaterials(description map[string]string, encryptionKey, signingKey delegatedkeys.DelegatedKey) *EncryptionMaterials {
+func NewEncryptionMaterials(description map[string]string, encryptionKey, signingKey delegatedkeys.DelegatedKey) CryptographicMaterials {
 	return &EncryptionMaterials{
 		materialDescription: description,
 		encryptionKey:       encryptionKey,
@@ -55,7 +55,7 @@ type DecryptionMaterials struct {
 	verificationKey     delegatedkeys.DelegatedKey
 }
 
-func NewDecryptionMaterials(description map[string]string, decryptionKey, verificationKey delegatedkeys.DelegatedKey) *DecryptionMaterials {
+func NewDecryptionMaterials(description map[string]string, decryptionKey, verificationKey delegatedkeys.DelegatedKey) CryptographicMaterials {
 	return &DecryptionMaterials{
 		materialDescription: description,
 		decryptionKey:       decryptionKey,

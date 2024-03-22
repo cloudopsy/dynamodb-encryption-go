@@ -120,7 +120,7 @@ type MockCryptographicMaterialsProvider struct {
 	mock.Mock
 }
 
-func (m *MockCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, materialName string) (*materials.EncryptionMaterials, error) {
+func (m *MockCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, materialName string) (materials.CryptographicMaterials, error) {
 	args := m.Called(ctx, materialName)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -128,7 +128,7 @@ func (m *MockCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Con
 	return args.Get(0).(*materials.EncryptionMaterials), args.Error(1)
 }
 
-func (m *MockCryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, materialName string, version int64) (*materials.DecryptionMaterials, error) {
+func (m *MockCryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, materialName string, version int64) (materials.CryptographicMaterials, error) {
 	args := m.Called(ctx, materialName, version)
 	return args.Get(0).(*materials.DecryptionMaterials), args.Error(1)
 }

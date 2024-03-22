@@ -26,7 +26,7 @@ func NewKeyMaterialStore(dynamoDBClient *dynamodb.Client, tableName string) (*Ke
 }
 
 // StoreNewMaterial stores a new material along with its encryption context serialized as JSON.
-func (s *KeyMaterialStore) StoreNewMaterial(ctx context.Context, materialName string, material *materials.EncryptionMaterials) error {
+func (s *KeyMaterialStore) StoreNewMaterial(ctx context.Context, materialName string, material materials.CryptographicMaterials) error {
 	// Serialize the material description to a JSON string.
 	materialDescriptionJSON, err := json.Marshal(material.MaterialDescription())
 	if err != nil {

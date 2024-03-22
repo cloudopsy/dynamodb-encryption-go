@@ -44,7 +44,7 @@ func (p *AwsKmsCryptographicMaterialsProvider) DecryptDataKey(encryptedKeyset []
 }
 
 // EncryptionMaterials retrieves and stores encryption materials for the given encryption context.
-func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, materialName string) (*materials.EncryptionMaterials, error) {
+func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, materialName string) (materials.CryptographicMaterials, error) {
 	// Generate a new Tink keyset and wrap it
 	delegatedKey, wrappedKeyset, err := p.GenerateDataKey()
 	if err != nil {
@@ -70,7 +70,7 @@ func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.C
 	return encryptionMaterials, nil
 }
 
-func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, materialName string, version int64) (*materials.DecryptionMaterials, error) {
+func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.Context, materialName string, version int64) (materials.CryptographicMaterials, error) {
 	materialDescMap, wrappedKeysetBase64, err := p.MaterialStore.RetrieveMaterial(ctx, materialName, version)
 	if err != nil {
 		return nil, err
