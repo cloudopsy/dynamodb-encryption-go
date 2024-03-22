@@ -30,6 +30,72 @@ type PrimaryKeyInfo struct {
 	SortKey      string
 }
 
+// EncryptedPaginator is a paginator for encrypted DynamoDB items.
+type EncryptedPaginator struct {
+	client    *EncryptedClient
+	nextToken map[string]types.AttributeValue
+}
+
+// NewEncryptedPaginator creates a new instance of EncryptedPaginator.
+func NewEncryptedPaginator(client *EncryptedClient) *EncryptedPaginator {
+	return &EncryptedPaginator{
+		client:    client,
+		nextToken: nil,
+	}
+}
+
+func (p *EncryptedPaginator) Query(ctx context.Context, input *dynamodb.QueryInput, fn func(*dynamodb.QueryOutput, bool) bool) error {
+	for {
+		if p.nextToken != nil {
+			input.ExclusiveStartKey = p.nextToken
+		}
+
+		output, err := p.client.Query(ctx, input)
+		if err != nil {
+			return err
+		}
+
+		lastPage := len(output.LastEvaluatedKey) == 0
+		if !fn(output, lastPage) {
+			break
+		}
+
+		if lastPage {
+			break
+		}
+
+		p.nextToken = output.LastEvaluatedKey
+	}
+
+	return nil
+}
+
+func (p *EncryptedPaginator) Scan(ctx context.Context, input *dynamodb.ScanInput, fn func(*dynamodb.ScanOutput, bool) bool) error {
+	for {
+		if p.nextToken != nil {
+			input.ExclusiveStartKey = p.nextToken
+		}
+
+		output, err := p.client.Scan(ctx, input)
+		if err != nil {
+			return err
+		}
+
+		lastPage := len(output.LastEvaluatedKey) == 0
+		if !fn(output, lastPage) {
+			break
+		}
+
+		if lastPage {
+			break
+		}
+
+		p.nextToken = output.LastEvaluatedKey
+	}
+
+	return nil
+}
+
 // EncryptedClient facilitates encrypted operations on DynamoDB items.
 type EncryptedClient struct {
 	client            DynamoDBClientInterface
@@ -49,6 +115,13 @@ func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provid
 		attributeActions:  attributeActions,
 		lock:              sync.RWMutex{},
 	}
+}
+
+func (ec *EncryptedClient) GetPaginator(operationName string) (*EncryptedPaginator, error) {
+	if operationName != "Query" && operationName != "Scan" {
+		return nil, fmt.Errorf("unsupported operation for pagination: %s", operationName)
+	}
+	return NewEncryptedPaginator(ec), nil
 }
 
 // PutItem encrypts an item and puts it into a DynamoDB table.

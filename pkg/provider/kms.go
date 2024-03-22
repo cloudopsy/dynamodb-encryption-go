@@ -15,11 +15,11 @@ type AwsKmsCryptographicMaterialsProvider struct {
 	KeyID             string
 	EncryptionContext map[string]string
 	DelegatedKey      *delegatedkeys.TinkDelegatedKey
-	MaterialStore     *store.KeyMaterialStore
+	MaterialStore     *store.MetaStore
 }
 
 // NewAwsKmsCryptographicMaterialsProvider initializes a provider with the specified AWS KMS key ID, encryption context, and material store.
-func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map[string]string, materialStore *store.KeyMaterialStore) (CryptographicMaterialsProvider, error) {
+func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map[string]string, materialStore *store.MetaStore) (CryptographicMaterialsProvider, error) {
 
 	return &AwsKmsCryptographicMaterialsProvider{
 		KeyID:             keyID,

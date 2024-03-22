@@ -12,21 +12,21 @@ import (
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/materials"
 )
 
-type KeyMaterialStore struct {
+type MetaStore struct {
 	DynamoDBClient *dynamodb.Client
 	TableName      string
 }
 
-// NewKeyMaterialStore creates a new instance of KeyMaterialStore.
-func NewKeyMaterialStore(dynamoDBClient *dynamodb.Client, tableName string) (*KeyMaterialStore, error) {
-	return &KeyMaterialStore{
+// NewMetaStore creates a new instance of MetaStore.
+func NewMetaStore(dynamoDBClient *dynamodb.Client, tableName string) (*MetaStore, error) {
+	return &MetaStore{
 		DynamoDBClient: dynamoDBClient,
 		TableName:      tableName,
 	}, nil
 }
 
 // StoreNewMaterial stores a new material along with its encryption context serialized as JSON.
-func (s *KeyMaterialStore) StoreNewMaterial(ctx context.Context, materialName string, material materials.CryptographicMaterials) error {
+func (s *MetaStore) StoreNewMaterial(ctx context.Context, materialName string, material materials.CryptographicMaterials) error {
 	// Serialize the material description to a JSON string.
 	materialDescriptionJSON, err := json.Marshal(material.MaterialDescription())
 	if err != nil {
@@ -83,7 +83,7 @@ func (s *KeyMaterialStore) StoreNewMaterial(ctx context.Context, materialName st
 }
 
 // RetrieveMaterial retrieves a material and its encryption context by materialName and version.
-func (s *KeyMaterialStore) RetrieveMaterial(ctx context.Context, materialName string, version int64) (map[string]string, string, error) {
+func (s *MetaStore) RetrieveMaterial(ctx context.Context, materialName string, version int64) (map[string]string, string, error) {
 	// If version is less than 1, retrieve the latest version
 	if version < 1 {
 		var err error
@@ -135,7 +135,7 @@ func (s *KeyMaterialStore) RetrieveMaterial(ctx context.Context, materialName st
 	return materialDescMap, wrappedKeysetBase64, nil
 }
 
-func (s *KeyMaterialStore) getLastVersion(ctx context.Context, materialName string) (int64, error) {
+func (s *MetaStore) getLastVersion(ctx context.Context, materialName string) (int64, error) {
 	input := &dynamodb.QueryInput{
 		TableName:              aws.String(s.TableName),
 		KeyConditionExpression: aws.String("MaterialName = :materialName"),
@@ -172,7 +172,7 @@ func (s *KeyMaterialStore) getLastVersion(ctx context.Context, materialName stri
 }
 
 // CreateTableIfNotExists checks if a DynamoDB table exists, and if not, creates it.
-func (s *KeyMaterialStore) CreateTableIfNotExists(ctx context.Context) error {
+func (s *MetaStore) CreateTableIfNotExists(ctx context.Context) error {
 	_, err := s.DynamoDBClient.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(s.TableName),
 	})

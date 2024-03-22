@@ -31,7 +31,7 @@ func main() {
 	dynamoDBClient := dynamodb.NewFromConfig(cfg)
 
 	// Initialize the key material store
-	materialStore, err := store.NewKeyMaterialStore(dynamoDBClient, dynamoDBTableName)
+	materialStore, err := store.NewMetaStore(dynamoDBClient, dynamoDBTableName)
 	if err != nil {
 		log.Fatalf("Failed to create key material store: %v", err)
 	}
@@ -174,6 +174,24 @@ func main() {
 		log.Fatalf("Failed to delete encrypted item: %v", err)
 	}
 	fmt.Println("Encrypted item deleted successfully.")
+
+	// Paginate and decrypt items
+	paginator, err := ec.GetPaginator("Scan")
+	if err != nil {
+		log.Fatalf("Failed to get paginator: %v", err)
+	}
+
+	scanInput = &dynamodb.ScanInput{
+		TableName: aws.String(tableName),
+	}
+
+	err = paginator.Scan(ctx, scanInput, func(page *dynamodb.ScanOutput, lastPage bool) bool {
+		fmt.Printf("Decrypted page results: %v\n", page.Items)
+		return !lastPage // return false to stop paginating
+	})
+	if err != nil {
+		log.Fatalf("Failed during paginated scan: %v", err)
+	}
 
 }
 
