@@ -1,4 +1,4 @@
-package client
+package encrypted
 
 import (
 	"context"
@@ -162,7 +162,10 @@ func TestEncryptedClient_PutItem(t *testing.T) {
 		nil,
 	), nil)
 
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	item := map[string]types.AttributeValue{
 		"PK":         &types.AttributeValueMemberS{Value: "123"},
@@ -186,7 +189,10 @@ func TestEncryptedClient_PutItem(t *testing.T) {
 func TestEncryptedClient_PutItem_Failure(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock the DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -229,7 +235,10 @@ func TestEncryptedClient_PutItem_Failure(t *testing.T) {
 func TestEncryptedClient_GetItem_Success(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -277,7 +286,9 @@ func TestEncryptedClient_GetItem_Success(t *testing.T) {
 func TestEncryptedClient_Query(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -331,7 +342,9 @@ func TestEncryptedClient_Query(t *testing.T) {
 func TestEncryptedClient_Scan(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -381,7 +394,9 @@ func TestEncryptedClient_Scan(t *testing.T) {
 func TestEncryptedClient_BatchGetItem(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -446,7 +461,9 @@ func TestEncryptedClient_BatchGetItem(t *testing.T) {
 func TestEncryptedClient_BatchWriteItem(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -503,7 +520,9 @@ func TestEncryptedClient_BatchWriteItem(t *testing.T) {
 func TestEncryptedClient_DeleteItem(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider)
+	attributeActions := NewAttributeActions(AttributeActionDoNothing)
+	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{

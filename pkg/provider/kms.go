@@ -30,7 +30,7 @@ func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map
 
 // GenerateDataKey generates a new data key using AWS KMS and wraps the Tink keyset.
 func (p *AwsKmsCryptographicMaterialsProvider) GenerateDataKey() (*delegatedkeys.TinkDelegatedKey, []byte, error) {
-	delegatedKey, wrappedKeyset, err := delegatedkeys.GenerateDataKey(p.KeyID, "aead")
+	delegatedKey, wrappedKeyset, err := delegatedkeys.GenerateDataKey(p.KeyID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
 	}

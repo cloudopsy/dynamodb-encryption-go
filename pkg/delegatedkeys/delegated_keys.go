@@ -7,7 +7,6 @@ import (
 
 	"github.com/tink-crypto/tink-go-awskms/integration/awskms"
 	"github.com/tink-crypto/tink-go/v2/aead"
-	"github.com/tink-crypto/tink-go/v2/daead"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"github.com/tink-crypto/tink-go/v2/signature"
 )
@@ -61,6 +60,7 @@ func (dk *TinkDelegatedKey) AllowedForRawMaterials() bool {
 }
 
 func (dk *TinkDelegatedKey) Encrypt(plaintext []byte, associatedData []byte) ([]byte, error) {
+	// TODO: Support AEAD and DAEAD primitives
 	a, err := aead.New(dk.keysetHandle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
@@ -69,6 +69,7 @@ func (dk *TinkDelegatedKey) Encrypt(plaintext []byte, associatedData []byte) ([]
 }
 
 func (dk *TinkDelegatedKey) Decrypt(ciphertext []byte, associatedData []byte) ([]byte, error) {
+	// TODO: Support AEAD and DAEAD primitives
 	a, err := aead.New(dk.keysetHandle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
@@ -142,21 +143,11 @@ func UnwrapKeyset(encryptedKeyset []byte, kekUri string) (*TinkDelegatedKey, err
 	return NewTinkDelegatedKey(handle, kekUri), nil
 }
 
-func GenerateDataKey(keyURI, keyType string) (*TinkDelegatedKey, []byte, error) {
-	var kh *keyset.Handle
-	var err error
-
-	switch strings.ToLower(keyType) {
-	case "aead":
-		kh, err = keyset.NewHandle(aead.AES256GCMKeyTemplate())
-	case "daead":
-		kh, err = keyset.NewHandle(daead.AESSIVKeyTemplate())
-	default:
-		return nil, nil, fmt.Errorf("unsupported key type: %v", keyType)
-	}
+func GenerateDataKey(keyURI string) (*TinkDelegatedKey, []byte, error) {
+	kh, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
 
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate new keyset handle for %v: %v", keyType, err)
+		return nil, nil, fmt.Errorf("failed to generate new keyset handle: %v", err)
 	}
 
 	delegatedKey := NewTinkDelegatedKey(kh, keyURI)

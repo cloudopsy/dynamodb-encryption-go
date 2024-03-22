@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/encrypted"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider/store"
 )
@@ -47,8 +47,11 @@ func main() {
 		log.Fatalf("Failed to create cryptographic materials provider: %v", err)
 	}
 
+	attributeAction := encrypted.NewAttributeActions(encrypted.AttributeActionDoNothing)
+	attributeAction.SetAttributeAction("Password", encrypted.AttributeActionEncrypt)
+
 	// Initialize EncryptedClient
-	ec := client.NewEncryptedClient(dynamoDBClient, cmp)
+	ec := encrypted.NewEncryptedClient(dynamoDBClient, cmp, attributeAction)
 
 	// User credentials to encrypt and store
 	userID := "user1"
@@ -162,7 +165,7 @@ func main() {
 	deleteItem := &dynamodb.DeleteItemInput{
 		TableName: &tableName,
 		Key: map[string]types.AttributeValue{
-			"UserID": &types.AttributeValueMemberS{Value: "user1"},
+			"UserID": &types.AttributeValueMemberS{Value: "user2"},
 		},
 	}
 
