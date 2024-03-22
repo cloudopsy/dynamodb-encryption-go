@@ -32,25 +32,25 @@ type PrimaryKeyInfo struct {
 
 // EncryptedPaginator is a paginator for encrypted DynamoDB items.
 type EncryptedPaginator struct {
-	client    *EncryptedClient
-	nextToken map[string]types.AttributeValue
+	Client    *EncryptedClient
+	NextToken map[string]types.AttributeValue
 }
 
 // NewEncryptedPaginator creates a new instance of EncryptedPaginator.
 func NewEncryptedPaginator(client *EncryptedClient) *EncryptedPaginator {
 	return &EncryptedPaginator{
-		client:    client,
-		nextToken: nil,
+		Client:    client,
+		NextToken: nil,
 	}
 }
 
 func (p *EncryptedPaginator) Query(ctx context.Context, input *dynamodb.QueryInput, fn func(*dynamodb.QueryOutput, bool) bool) error {
 	for {
-		if p.nextToken != nil {
-			input.ExclusiveStartKey = p.nextToken
+		if p.NextToken != nil {
+			input.ExclusiveStartKey = p.NextToken
 		}
 
-		output, err := p.client.Query(ctx, input)
+		output, err := p.Client.Query(ctx, input)
 		if err != nil {
 			return err
 		}
@@ -64,7 +64,7 @@ func (p *EncryptedPaginator) Query(ctx context.Context, input *dynamodb.QueryInp
 			break
 		}
 
-		p.nextToken = output.LastEvaluatedKey
+		p.NextToken = output.LastEvaluatedKey
 	}
 
 	return nil
@@ -72,11 +72,11 @@ func (p *EncryptedPaginator) Query(ctx context.Context, input *dynamodb.QueryInp
 
 func (p *EncryptedPaginator) Scan(ctx context.Context, input *dynamodb.ScanInput, fn func(*dynamodb.ScanOutput, bool) bool) error {
 	for {
-		if p.nextToken != nil {
-			input.ExclusiveStartKey = p.nextToken
+		if p.NextToken != nil {
+			input.ExclusiveStartKey = p.NextToken
 		}
 
-		output, err := p.client.Scan(ctx, input)
+		output, err := p.Client.Scan(ctx, input)
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func (p *EncryptedPaginator) Scan(ctx context.Context, input *dynamodb.ScanInput
 			break
 		}
 
-		p.nextToken = output.LastEvaluatedKey
+		p.NextToken = output.LastEvaluatedKey
 	}
 
 	return nil
@@ -98,21 +98,20 @@ func (p *EncryptedPaginator) Scan(ctx context.Context, input *dynamodb.ScanInput
 
 // EncryptedClient facilitates encrypted operations on DynamoDB items.
 type EncryptedClient struct {
-	client            DynamoDBClientInterface
-	materialsProvider provider.CryptographicMaterialsProvider
-	primaryKeyCache   map[string]*PrimaryKeyInfo
-	attributeActions  *AttributeActions
-
-	lock sync.RWMutex
+	Client            DynamoDBClientInterface
+	MaterialsProvider provider.CryptographicMaterialsProvider
+	PrimaryKeyCache   map[string]*PrimaryKeyInfo
+	AttributeActions  *AttributeActions
+	lock              sync.RWMutex
 }
 
 // NewEncryptedClient creates a new instance of EncryptedClient.
 func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provider.CryptographicMaterialsProvider, attributeActions *AttributeActions) *EncryptedClient {
 	return &EncryptedClient{
-		client:            client,
-		materialsProvider: materialsProvider,
-		primaryKeyCache:   make(map[string]*PrimaryKeyInfo),
-		attributeActions:  attributeActions,
+		Client:            client,
+		MaterialsProvider: materialsProvider,
+		PrimaryKeyCache:   make(map[string]*PrimaryKeyInfo),
+		AttributeActions:  attributeActions,
 		lock:              sync.RWMutex{},
 	}
 }
@@ -139,13 +138,13 @@ func (ec *EncryptedClient) PutItem(ctx context.Context, input *dynamodb.PutItemI
 	}
 
 	// Put the encrypted item into the DynamoDB table
-	return ec.client.PutItem(ctx, encryptedInput)
+	return ec.Client.PutItem(ctx, encryptedInput)
 }
 
 // GetItem retrieves an item from a DynamoDB table and decrypts it.
 func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 	// First, retrieve the encrypted item from DynamoDB
-	encryptedOutput, err := ec.client.GetItem(ctx, input)
+	encryptedOutput, err := ec.Client.GetItem(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving encrypted item: %v", err)
 	}
@@ -171,7 +170,7 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 
 // Query executes a Query operation on DynamoDB and decrypts the returned items.
 func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-	encryptedOutput, err := ec.client.Query(ctx, input)
+	encryptedOutput, err := ec.Client.Query(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error querying encrypted items: %v", err)
 	}
@@ -190,7 +189,7 @@ func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput
 
 // Scan executes a Scan operation on DynamoDB and decrypts the returned items.
 func (ec *EncryptedClient) Scan(ctx context.Context, input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
-	encryptedOutput, err := ec.client.Scan(ctx, input)
+	encryptedOutput, err := ec.Client.Scan(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error scanning encrypted items: %v", err)
 	}
@@ -223,12 +222,12 @@ func (ec *EncryptedClient) BatchWriteItem(ctx context.Context, input *dynamodb.B
 		}
 	}
 
-	return ec.client.BatchWriteItem(ctx, input)
+	return ec.Client.BatchWriteItem(ctx, input)
 }
 
 // BatchGetItem retrieves a batch of items from DynamoDB and decrypts them.
 func (ec *EncryptedClient) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-	encryptedOutput, err := ec.client.BatchGetItem(ctx, input)
+	encryptedOutput, err := ec.Client.BatchGetItem(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error batch getting encrypted items: %v", err)
 	}
@@ -250,7 +249,7 @@ func (ec *EncryptedClient) BatchGetItem(ctx context.Context, input *dynamodb.Bat
 // DeleteItem deletes an item and its associated metadata from a DynamoDB table.
 func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
 	// First, delete the item from DynamoDB
-	deleteOutput, err := ec.client.DeleteItem(ctx, input)
+	deleteOutput, err := ec.Client.DeleteItem(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error deleting encrypted item: %v", err)
 	}
@@ -268,7 +267,7 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 	}
 
 	// Delete the associated metadata
-	tableName := ec.materialsProvider.TableName()
+	tableName := ec.MaterialsProvider.TableName()
 	queryInput := &dynamodb.QueryInput{
 		TableName:              aws.String(tableName),
 		KeyConditionExpression: aws.String("MaterialName = :materialName"),
@@ -277,7 +276,7 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 		},
 	}
 
-	queryOutput, err := ec.client.Query(ctx, queryInput)
+	queryOutput, err := ec.Client.Query(ctx, queryInput)
 	if err != nil {
 		return nil, fmt.Errorf("error querying for versions: %v", err)
 	}
@@ -297,7 +296,7 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 		}
 
 		batchWriteInput := &dynamodb.BatchWriteItemInput{RequestItems: deleteRequest}
-		_, err = ec.client.BatchWriteItem(ctx, batchWriteInput)
+		_, err = ec.Client.BatchWriteItem(ctx, batchWriteInput)
 		if err != nil {
 			return nil, fmt.Errorf("error deleting a version: %v", err)
 		}
@@ -309,7 +308,7 @@ func (ec *EncryptedClient) DeleteItem(ctx context.Context, input *dynamodb.Delet
 // getPrimaryKeyInfo lazily loads and caches primary key information in a thread-safe manner.
 func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName string) (*PrimaryKeyInfo, error) {
 	ec.lock.RLock()
-	pkInfo, exists := ec.primaryKeyCache[tableName]
+	pkInfo, exists := ec.PrimaryKeyCache[tableName]
 	ec.lock.RUnlock()
 
 	if exists {
@@ -319,17 +318,17 @@ func (ec *EncryptedClient) getPrimaryKeyInfo(ctx context.Context, tableName stri
 	ec.lock.Lock()
 	defer ec.lock.Unlock()
 
-	pkInfo, exists = ec.primaryKeyCache[tableName]
+	pkInfo, exists = ec.PrimaryKeyCache[tableName]
 	if exists {
 		return pkInfo, nil
 	}
 
-	pkInfo, err := TableInfo(ctx, ec.client, tableName)
+	pkInfo, err := TableInfo(ctx, ec.Client, tableName)
 	if err != nil {
 		return nil, err
 	}
 
-	ec.primaryKeyCache[tableName] = pkInfo
+	ec.PrimaryKeyCache[tableName] = pkInfo
 
 	return pkInfo, nil
 }
@@ -347,7 +346,7 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 	if err != nil {
 		return nil, fmt.Errorf("error constructing material name: %v", err)
 	}
-	encryptionMaterials, err := ec.materialsProvider.EncryptionMaterials(ctx, materialName)
+	encryptionMaterials, err := ec.MaterialsProvider.EncryptionMaterials(ctx, materialName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch encryption materials: %v", err)
 	}
@@ -365,7 +364,7 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 			return nil, fmt.Errorf("error converting attribute value to bytes: %v", err)
 		}
 
-		action := ec.attributeActions.GetAttributeAction(key)
+		action := ec.AttributeActions.GetAttributeAction(key)
 		switch action {
 		case AttributeActionEncrypt, AttributeActionEncryptDeterministically:
 			// TODO: Implement deterministic encryption
@@ -394,7 +393,7 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 	if err != nil {
 		return nil, fmt.Errorf("error constructing material name: %v", err)
 	}
-	decryptionMaterials, err := ec.materialsProvider.DecryptionMaterials(ctx, materialName, 0)
+	decryptionMaterials, err := ec.MaterialsProvider.DecryptionMaterials(ctx, materialName, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch decryption materials: %v", err)
 	}
@@ -414,7 +413,7 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 			continue
 		}
 
-		action := ec.attributeActions.GetAttributeAction(key)
+		action := ec.AttributeActions.GetAttributeAction(key)
 		switch action {
 		case AttributeActionEncrypt, AttributeActionEncryptDeterministically:
 			// TODO: Implement deterministic encryption
