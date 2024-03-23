@@ -28,27 +28,24 @@ func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map
 	}, nil
 }
 
-// GenerateDataKey generates a new data key using AWS KMS and wraps the Tink keyset.
-func (p *AwsKmsCryptographicMaterialsProvider) GenerateDataKey() (*delegatedkeys.TinkDelegatedKey, []byte, error) {
-	delegatedKey, wrappedKeyset, err := delegatedkeys.GenerateDataKey(p.KeyID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
-	}
-
-	return delegatedKey, wrappedKeyset, nil
-}
-
-// DecryptDataKey unwraps the Tink keyset using AWS KMS.
-func (p *AwsKmsCryptographicMaterialsProvider) DecryptDataKey(encryptedKeyset []byte) (*delegatedkeys.TinkDelegatedKey, error) {
-	return delegatedkeys.UnwrapKeyset(encryptedKeyset, p.KeyID)
-}
-
 // EncryptionMaterials retrieves and stores encryption materials for the given encryption context.
 func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, materialName string) (materials.CryptographicMaterials, error) {
 	// Generate a new Tink keyset and wrap it
-	delegatedKey, wrappedKeyset, err := p.GenerateDataKey()
+	delegatedKey, wrappedKeyset, err := delegatedkeys.GenerateDataKey(p.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate and wrap data key: %v", err)
+	}
+
+	// Assume GenerateSigningKey is modified to return public key as well
+	delegatedSigningKey, _, publicKeyBytes, err := delegatedkeys.GenerateSigningKey(p.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate and wrap data key: %v", err)
+	}
+
+	// Sign the wrappedKeyset
+	signature, err := delegatedSigningKey.Sign(wrappedKeyset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign wrappedKeyset: %v", err)
 	}
 
 	// Prepare the material description with encryption context and wrapped keyset
@@ -58,6 +55,8 @@ func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.C
 	}
 	materialDescription["ContentEncryptionAlgorithm"] = delegatedKey.Algorithm()
 	materialDescription["WrappedKeyset"] = base64.StdEncoding.EncodeToString(wrappedKeyset)
+	materialDescription["Signature"] = base64.StdEncoding.EncodeToString(signature)
+	materialDescription["PublicKey"] = base64.StdEncoding.EncodeToString(publicKeyBytes)
 
 	// Create encryption materials with the material description and the encryption key
 	encryptionMaterials := materials.NewEncryptionMaterials(materialDescription, delegatedKey, nil)
@@ -81,7 +80,25 @@ func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.C
 		return nil, fmt.Errorf("failed to decode encrypted keyset: %v", err)
 	}
 
-	delegatedKey, err := p.DecryptDataKey(encryptedKeyset)
+	publicKeyBase64 := materialDescMap["PublicKey"]
+	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode public key: %v", err)
+	}
+
+	signatureBase64 := materialDescMap["Signature"]
+	signatureBytes, err := base64.StdEncoding.DecodeString(signatureBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode signature: %v", err)
+	}
+
+	// Verify the wrapped keyset's signature
+	valid, err := delegatedkeys.VerifySignature(publicKeyBytes, signatureBytes, encryptedKeyset)
+	if err != nil || !valid {
+		return nil, fmt.Errorf("failed to verify the wrapped keyset's signature: %v", err)
+	}
+
+	delegatedKey, err := delegatedkeys.UnwrapKeyset(encryptedKeyset, p.KeyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt and unwrap data key: %v", err)
 	}

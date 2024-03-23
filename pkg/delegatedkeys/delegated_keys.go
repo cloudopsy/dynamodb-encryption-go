@@ -158,3 +158,53 @@ func GenerateDataKey(keyURI string) (*TinkDelegatedKey, []byte, error) {
 
 	return delegatedKey, wrappedKeyset, nil
 }
+
+func GenerateSigningKey(keyURI string) (*TinkDelegatedKey, []byte, []byte, error) {
+	kh, err := keyset.NewHandle(signature.ECDSAP256KeyTemplate())
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to generate new keyset handle: %v", err)
+	}
+
+	// Extract the public key
+	publicKeysetHandle, err := kh.Public()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to extract public key: %v", err)
+	}
+
+	var publicKeyBytes bytes.Buffer
+	publicKeyWriter := keyset.NewBinaryWriter(&publicKeyBytes)
+	if err := publicKeysetHandle.WriteWithNoSecrets(publicKeyWriter); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to serialize public key: %v", err)
+	}
+
+	delegatedKey := NewTinkDelegatedKey(kh, keyURI)
+	wrappedKeyset, err := delegatedKey.WrapKeyset()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to wrap keyset: %v", err)
+	}
+
+	return delegatedKey, wrappedKeyset, publicKeyBytes.Bytes(), nil
+}
+
+func VerifySignature(publicKeyBytes, sig, data []byte) (bool, error) {
+	// Load the public key into a keyset.Handle
+	publicKeyReader := keyset.NewBinaryReader(bytes.NewReader(publicKeyBytes))
+	publicKeyHandle, err := keyset.ReadWithNoSecrets(publicKeyReader)
+	if err != nil {
+		return false, fmt.Errorf("failed to load public key: %v", err)
+	}
+
+	// Get a Verifier instance from the public key handle
+	verifier, err := signature.NewVerifier(publicKeyHandle)
+	if err != nil {
+		return false, fmt.Errorf("failed to get verifier: %v", err)
+	}
+
+	// Verify the signature
+	err = verifier.Verify(sig, data)
+	if err != nil {
+		return false, nil
+	}
+
+	return true, nil
+}

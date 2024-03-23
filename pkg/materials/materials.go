@@ -1,6 +1,8 @@
 package materials
 
-import "github.com/cloudopsy/dynamodb-encryption-go/pkg/delegatedkeys"
+import (
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/delegatedkeys"
+)
 
 // CryptographicMaterials defines a common interface for cryptographic materials.
 type CryptographicMaterials interface {
