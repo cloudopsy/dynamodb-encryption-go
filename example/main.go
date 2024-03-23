@@ -47,11 +47,12 @@ func main() {
 		log.Fatalf("Failed to create cryptographic materials provider: %v", err)
 	}
 
-	attributeAction := encrypted.NewAttributeActions(encrypted.AttributeActionDoNothing)
-	attributeAction.SetAttributeAction("Password", encrypted.AttributeActionEncrypt)
+	clientConfig := encrypted.NewClientConfig(
+		encrypted.WithDefaultEncryption(encrypted.EncryptStandard),
+	)
 
 	// Initialize EncryptedClient
-	ec := encrypted.NewEncryptedClient(dynamoDBClient, cmp, attributeAction)
+	ec := encrypted.NewEncryptedClient(dynamoDBClient, cmp, clientConfig)
 
 	// User credentials to encrypt and store
 	userID := "user1"
@@ -107,8 +108,7 @@ func main() {
 	}
 	fmt.Printf("Decrypted scan results: %v\n", scanResult.Items)
 
-	// Query demonstration
-	// Assuming 'UserID' is your partition key.
+	// Query
 	queryInput := &dynamodb.QueryInput{
 		TableName:              aws.String(tableName),
 		KeyConditionExpression: aws.String("UserID = :userID"),

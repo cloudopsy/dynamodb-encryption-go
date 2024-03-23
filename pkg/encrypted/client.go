@@ -101,18 +101,19 @@ type EncryptedClient struct {
 	Client            DynamoDBClientInterface
 	MaterialsProvider provider.CryptographicMaterialsProvider
 	PrimaryKeyCache   map[string]*PrimaryKeyInfo
-	AttributeActions  *AttributeActions
+	ClientConfig      *ClientConfig
 	lock              sync.RWMutex
 }
 
 // NewEncryptedClient creates a new instance of EncryptedClient.
-func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provider.CryptographicMaterialsProvider, attributeActions *AttributeActions) *EncryptedClient {
+func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provider.CryptographicMaterialsProvider, config *ClientConfig) *EncryptedClient {
 	return &EncryptedClient{
 		Client:            client,
 		MaterialsProvider: materialsProvider,
 		PrimaryKeyCache:   make(map[string]*PrimaryKeyInfo),
-		AttributeActions:  attributeActions,
-		lock:              sync.RWMutex{},
+		ClientConfig:      config,
+
+		lock: sync.RWMutex{},
 	}
 }
 
@@ -364,16 +365,26 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 			return nil, fmt.Errorf("error converting attribute value to bytes: %v", err)
 		}
 
-		action := ec.AttributeActions.GetAttributeAction(key)
-		switch action {
-		case AttributeActionEncrypt, AttributeActionEncryptDeterministically:
+		encryptionAction := ec.ClientConfig.Encryption.DefaultAction
+		if specificAction, ok := ec.ClientConfig.Encryption.SpecificActions[key]; ok {
+			encryptionAction = specificAction
+		}
+
+		switch encryptionAction {
+		case EncryptStandard:
+			encryptedData, err := encryptionMaterials.EncryptionKey().Encrypt(rawData, []byte(key))
+			if err != nil {
+				return nil, fmt.Errorf("error encrypting attribute value: %v", err)
+			}
+			encryptedItem[key] = &types.AttributeValueMemberB{Value: encryptedData}
+		case EncryptDeterministic:
 			// TODO: Implement deterministic encryption
 			encryptedData, err := encryptionMaterials.EncryptionKey().Encrypt(rawData, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("error encrypting attribute value: %v", err)
 			}
 			encryptedItem[key] = &types.AttributeValueMemberB{Value: encryptedData}
-		case AttributeActionDoNothing:
+		case EncryptNone:
 			encryptedItem[key] = value
 		}
 	}
@@ -413,24 +424,28 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 			continue
 		}
 
-		action := ec.AttributeActions.GetAttributeAction(key)
-		switch action {
-		case AttributeActionEncrypt, AttributeActionEncryptDeterministically:
+		encryptionAction := ec.ClientConfig.Encryption.DefaultAction
+		if specificAction, ok := ec.ClientConfig.Encryption.SpecificActions[key]; ok {
+			encryptionAction = specificAction
+		}
+
+		var decryptedData []byte
+		switch encryptionAction {
+		case EncryptStandard, EncryptDeterministic:
 			// TODO: Implement deterministic encryption
-			rawData, err := decryptionMaterials.DecryptionKey().Decrypt(encryptedData.Value, []byte(key))
+			decryptedData, err = decryptionMaterials.DecryptionKey().Decrypt(encryptedData.Value, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("error decrypting attribute value: %v", err)
 			}
-			decryptedValue, err := utils.BytesToAttributeValue(rawData)
-			if err != nil {
-				return nil, fmt.Errorf("error converting bytes to attribute value: %v", err)
-			}
-
-			decryptedItem[key] = decryptedValue
-		case AttributeActionDoNothing:
-			decryptedItem[key] = value
+		case EncryptNone:
+			decryptedData = encryptedData.Value
 		}
 
+		decryptedValue, err := utils.BytesToAttributeValue(decryptedData)
+		if err != nil {
+			return nil, fmt.Errorf("error converting bytes to attribute value: %v", err)
+		}
+		decryptedItem[key] = decryptedValue
 	}
 
 	return decryptedItem, nil
