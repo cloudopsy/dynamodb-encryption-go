@@ -170,14 +170,14 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 }
 
 // Query executes a Query operation on DynamoDB and decrypts the returned items.
-func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	paginator := dynamodb.NewQueryPaginator(ec.Client, input)
 
 	var decryptedItems []map[string]types.AttributeValue
 	var lastEvaluatedKey map[string]types.AttributeValue
 
 	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(ctx)
+		output, err := paginator.NextPage(ctx, optFns...)
 		if err != nil {
 			return nil, fmt.Errorf("error querying encrypted items: %v", err)
 		}
