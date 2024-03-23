@@ -4,173 +4,230 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/client"
-	"github.com/cloudopsy/dynamodb-encryption-go/pkg/crypto"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/encrypted"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider/store"
+)
+
+const (
+	awsRegion         = "eu-west-2"
+	keyURI            = "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
+	dynamoDBTableName = "meta"
 )
 
 func main() {
-	// Create a new AWS session
-	sess := session.Must(session.NewSession())
-
-	// Create a DynamoDB client
-	dynamodbClient := dynamodb.New(sess)
-
-	// Create a Crypto provider
-	keyURI := "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
-	cryptoProvider, err := crypto.New(keyURI)
+	ctx := context.TODO()
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		log.Fatal("Failed to create Crypto provider:", err)
+		log.Fatalf("unable to load SDK config, %v", err)
 	}
 
-	materialsProvider := provider.NewCryptographicMaterialsProvider(cryptoProvider, map[string]string{
-		"example": "example-value",
-	})
-	// Configure attribute actions
-	attributeActions := client.NewAttributeActions().
-		WithDefaultAction(client.CryptoActionEncrypt).
-		WithAttributeAction("name", client.CryptoActionEncryptDeterministically)
-	encryptedClient := client.NewEncryptedClient(dynamodbClient, cryptoProvider, materialsProvider, attributeActions)
+	// Create DynamoDB client
+	dynamoDBClient := dynamodb.NewFromConfig(cfg)
 
-	// Table name for testing
-	tableName := "test"
-
-	// Create the test table if it doesn't exist
-	err = createTableIfNotExists(dynamodbClient, tableName)
+	// Initialize the key material store
+	materialStore, err := store.NewMetaStore(dynamoDBClient, dynamoDBTableName)
 	if err != nil {
-		log.Fatal("Failed to create table:", err)
+		log.Fatalf("Failed to create key material store: %v", err)
 	}
 
-	// Create a new item with various attribute types
-	item := map[string]*dynamodb.AttributeValue{
-		"id":      {S: aws.String("123")},
-		"name":    {S: aws.String("John Doe")},
-		"age":     {N: aws.String("30")},
-		"city":    {S: aws.String("New York")},
-		"active":  {BOOL: aws.Bool(true)},
-		"skills":  {SS: aws.StringSlice([]string{"Go", "Python", "Java"})},
-		"scores":  {NS: aws.StringSlice([]string{"85", "92", "78"})},
-		"data":    {B: []byte("some binary data")},
-		"created": {S: aws.String(time.Now().Format(time.RFC3339))},
-		"metadata": {M: map[string]*dynamodb.AttributeValue{
-			"key1": {S: aws.String("value1")},
-			"key2": {N: aws.String("42")},
-		}},
+	// Ensure DynamoDB table exists
+	if err := materialStore.CreateTableIfNotExists(ctx); err != nil {
+		log.Fatalf("Failed to ensure DynamoDB table exists: %v", err)
 	}
 
-	// Put the item into the DynamoDB table
-	err = putItem(encryptedClient, tableName, item)
+	// Initialize the cryptographic materials provider
+	cmp, err := provider.NewAwsKmsCryptographicMaterialsProvider(keyURI, nil, materialStore)
 	if err != nil {
-		log.Fatal("Failed to put item:", err)
+		log.Fatalf("Failed to create cryptographic materials provider: %v", err)
 	}
 
-	// Get the item from the DynamoDB table
-	decryptedItem, err := getItem(encryptedClient, tableName, "123")
-	if err != nil {
-		log.Fatal("Failed to get item:", err)
+	clientConfig := encrypted.NewClientConfig(
+		encrypted.WithDefaultEncryption(encrypted.EncryptStandard),
+	)
+
+	// Initialize EncryptedClient
+	ec := encrypted.NewEncryptedClient(dynamoDBClient, cmp, clientConfig)
+
+	// User credentials to encrypt and store
+	userID := "user1"
+	credentials := map[string]types.AttributeValue{
+		"UserID":   &types.AttributeValueMemberS{Value: userID},
+		"Username": &types.AttributeValueMemberS{Value: "exampleUser"},
+		"Password": &types.AttributeValueMemberS{Value: "examplePassword123"},
 	}
 
-	// Print the decrypted item
-	fmt.Println("Decrypted item:")
-	printItem(decryptedItem)
-}
+	// DynamoDB table name
+	tableName := "UserCredentials"
 
-func createTableIfNotExists(client *dynamodb.DynamoDB, tableName string) error {
-	_, err := client.DescribeTable(&dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
-	})
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == dynamodb.ErrCodeResourceNotFoundException {
-			// Table doesn't exist, create it
-			input := &dynamodb.CreateTableInput{
-				TableName: aws.String(tableName),
-				AttributeDefinitions: []*dynamodb.AttributeDefinition{
-					{
-						AttributeName: aws.String("id"),
-						AttributeType: aws.String("S"),
-					},
-				},
-				KeySchema: []*dynamodb.KeySchemaElement{
-					{
-						AttributeName: aws.String("id"),
-						KeyType:       aws.String("HASH"),
-					},
-				},
-				ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-					ReadCapacityUnits:  aws.Int64(1),
-					WriteCapacityUnits: aws.Int64(1),
-				},
-			}
-			_, err := client.CreateTable(input)
-			if err != nil {
-				return fmt.Errorf("failed to create table: %v", err)
-			}
-			fmt.Printf("Table %s created successfully\n", tableName)
-		} else {
-			return fmt.Errorf("failed to describe table: %v", err)
-		}
+	// Attempt to create the table
+	if err := createTableIfNotExists(ctx, dynamoDBClient, tableName); err != nil {
+		log.Fatalf("Error creating table: %v", err)
 	}
-	return nil
-}
 
-func putItem(encryptedClient *client.EncryptedClient, tableName string, item map[string]*dynamodb.AttributeValue) error {
+	// Put encrypted item
 	putItemInput := &dynamodb.PutItemInput{
-		TableName: aws.String(tableName),
-		Item:      item,
+		TableName: &tableName,
+		Item:      credentials,
 	}
 
-	_, err := encryptedClient.PutItem(context.Background(), putItemInput)
+	_, err = ec.PutItem(ctx, putItemInput)
 	if err != nil {
-		return fmt.Errorf("failed to put item: %v", err)
+		log.Fatalf("Failed to put encrypted item: %v", err)
 	}
+	fmt.Println("Encrypted item put successfully.")
 
-	return nil
-}
-
-func getItem(encryptedClient *client.EncryptedClient, tableName string, id string) (map[string]*dynamodb.AttributeValue, error) {
+	// Get and decrypt item
 	getItemInput := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {S: aws.String(id)},
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			"UserID": &types.AttributeValueMemberS{Value: userID},
 		},
 	}
 
-	getItemOutput, err := encryptedClient.GetItem(context.Background(), getItemInput)
+	result, err := ec.GetItem(ctx, getItemInput)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get item: %v", err)
+		log.Fatalf("Failed to get and decrypt item: %v", err)
 	}
 
-	return getItemOutput.Item, nil
+	fmt.Printf("Decrypted item: %v\n", result.Item)
+
+	// Scan demonstration
+	scanInput := &dynamodb.ScanInput{
+		TableName: &tableName,
+	}
+
+	scanResult, err := ec.Scan(ctx, scanInput)
+	if err != nil {
+		log.Fatalf("Failed to scan and decrypt items: %v", err)
+	}
+	fmt.Printf("Decrypted scan results: %v\n", scanResult.Items)
+
+	// Query
+	queryInput := &dynamodb.QueryInput{
+		TableName:              aws.String(tableName),
+		KeyConditionExpression: aws.String("UserID = :userID"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":userID": &types.AttributeValueMemberS{Value: "user1"},
+		},
+	}
+
+	queryResult, err := ec.Query(ctx, queryInput)
+	if err != nil {
+		log.Fatalf("Failed to query and decrypt items: %v", err)
+	}
+	fmt.Printf("Decrypted query results: %v\n", queryResult.Items)
+
+	// BatchWriteItem demonstration
+	batchGetItemInput := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]types.KeysAndAttributes{
+			tableName: {
+				Keys: []map[string]types.AttributeValue{
+					{
+						"UserID": &types.AttributeValueMemberS{Value: "user1"},
+					},
+				},
+			},
+		},
+	}
+	batchGetItemResult, err := ec.BatchGetItem(ctx, batchGetItemInput)
+	if err != nil {
+		log.Fatalf("Failed to batch get and decrypt items: %v", err)
+	}
+	fmt.Printf("Decrypted batch get items: %v\n", batchGetItemResult.Responses[tableName])
+
+	batchWriteItemInput := &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]types.WriteRequest{
+			tableName: {
+				{
+					PutRequest: &types.PutRequest{
+						Item: map[string]types.AttributeValue{
+							"UserID":   &types.AttributeValueMemberS{Value: "user2"},
+							"Username": &types.AttributeValueMemberS{Value: "anotherUser"},
+							"Password": &types.AttributeValueMemberS{Value: "anotherPassword123"},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err = ec.BatchWriteItem(ctx, batchWriteItemInput)
+	if err != nil {
+		log.Fatalf("Failed to batch write (put/delete) encrypted items: %v", err)
+	}
+	fmt.Println("Encrypted items batch written successfully.")
+
+	deleteItem := &dynamodb.DeleteItemInput{
+		TableName: &tableName,
+		Key: map[string]types.AttributeValue{
+			"UserID": &types.AttributeValueMemberS{Value: "user2"},
+		},
+	}
+
+	_, err = ec.DeleteItem(ctx, deleteItem)
+	if err != nil {
+		log.Fatalf("Failed to delete encrypted item: %v", err)
+	}
+	fmt.Println("Encrypted item deleted successfully.")
+
+	// Paginate and decrypt items
+	paginator, err := ec.GetPaginator("Scan")
+	if err != nil {
+		log.Fatalf("Failed to get paginator: %v", err)
+	}
+
+	scanInput = &dynamodb.ScanInput{
+		TableName: aws.String(tableName),
+	}
+
+	err = paginator.Scan(ctx, scanInput, func(page *dynamodb.ScanOutput, lastPage bool) bool {
+		fmt.Printf("Decrypted page results: %v\n", page.Items)
+		return !lastPage // return false to stop paginating
+	})
+	if err != nil {
+		log.Fatalf("Failed during paginated scan: %v", err)
+	}
+
 }
 
-func printItem(item map[string]*dynamodb.AttributeValue) {
-	for key, value := range item {
-		switch {
-		case value.S != nil:
-			fmt.Printf("%s: %s\n", key, *value.S)
-		case value.N != nil:
-			fmt.Printf("%s: %s\n", key, *value.N)
-		case value.BOOL != nil:
-			fmt.Printf("%s: %t\n", key, *value.BOOL)
-		case value.SS != nil:
-			fmt.Printf("%s: %v\n", key, aws.StringValueSlice(value.SS))
-		case value.NS != nil:
-			fmt.Printf("%s: %v\n", key, aws.StringValueSlice(value.NS))
-		case value.B != nil:
-			fmt.Printf("%s: %s\n", key, string(value.B))
-		case value.M != nil:
-			fmt.Printf("%s:\n", key)
-			for k, v := range value.M {
-				fmt.Printf("  %s: %v\n", k, v)
-			}
-		default:
-			fmt.Printf("%s: %v\n", key, value)
-		}
+func createTableIfNotExists(ctx context.Context, client *dynamodb.Client, tableName string) error {
+	_, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(tableName),
+	})
+
+	// If DescribeTable succeeds, the table exists and we return nil.
+	if err == nil {
+		fmt.Println("Table already exists:", tableName)
+		return nil
 	}
+
+	// If the table does not exist, create it.
+	_, err = client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []types.AttributeDefinition{
+			{
+				AttributeName: aws.String("UserID"),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+		},
+		KeySchema: []types.KeySchemaElement{
+			{
+				AttributeName: aws.String("UserID"),
+				KeyType:       types.KeyTypeHash,
+			},
+		},
+		BillingMode: types.BillingModePayPerRequest,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to create table: %v", err)
+	}
+
+	fmt.Println("Table created successfully:", tableName)
+	return nil
 }
