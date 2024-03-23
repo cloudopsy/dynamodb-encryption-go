@@ -171,22 +171,54 @@ func (ec *EncryptedClient) GetItem(ctx context.Context, input *dynamodb.GetItemI
 
 // Query executes a Query operation on DynamoDB and decrypts the returned items.
 func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-	encryptedOutput, err := ec.Client.Query(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("error querying encrypted items: %v", err)
-	}
+	paginator := dynamodb.NewQueryPaginator(ec.Client, input)
 
-	// Decrypt the items in the response
-	for i, item := range encryptedOutput.Items {
-		decryptedItem, decryptErr := ec.decryptItem(ctx, aws.StringValue(input.TableName), item)
-		if decryptErr != nil {
-			return nil, decryptErr
+	var decryptedItems []map[string]types.AttributeValue
+	var lastEvaluatedKey map[string]types.AttributeValue
+
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("error querying encrypted items: %v", err)
 		}
-		encryptedOutput.Items[i] = decryptedItem
+
+		// Decrypt the items in the response
+		for _, item := range output.Items {
+			decryptedItem, decryptErr := ec.decryptItem(ctx, aws.StringValue(input.TableName), item)
+			if decryptErr != nil {
+				return nil, decryptErr
+			}
+			decryptedItems = append(decryptedItems, decryptedItem)
+		}
+
+		lastEvaluatedKey = output.LastEvaluatedKey
 	}
 
-	return encryptedOutput, nil
+	return &dynamodb.QueryOutput{
+		Items:            decryptedItems,
+		Count:            int32(len(decryptedItems)),
+		ScannedCount:     int32(len(decryptedItems)),
+		LastEvaluatedKey: lastEvaluatedKey,
+	}, nil
 }
+
+// func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+// 	encryptedOutput, err := ec.Client.Query(ctx, input)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error querying encrypted items: %v", err)
+// 	}
+
+// 	// Decrypt the items in the response
+// 	for i, item := range encryptedOutput.Items {
+// 		decryptedItem, decryptErr := ec.decryptItem(ctx, aws.StringValue(input.TableName), item)
+// 		if decryptErr != nil {
+// 			return nil, decryptErr
+// 		}
+// 		encryptedOutput.Items[i] = decryptedItem
+// 	}
+
+// 	return encryptedOutput, nil
+// }
 
 // Scan executes a Scan operation on DynamoDB and decrypts the returned items.
 func (ec *EncryptedClient) Scan(ctx context.Context, input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
