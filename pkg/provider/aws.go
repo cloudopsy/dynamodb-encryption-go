@@ -92,7 +92,6 @@ func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.C
 		return nil, fmt.Errorf("failed to decode signature: %v", err)
 	}
 
-	// Verify the wrapped keyset's signature
 	valid, err := delegatedkeys.VerifySignature(publicKeyBytes, signatureBytes, encryptedKeyset)
 	if err != nil || !valid {
 		return nil, fmt.Errorf("failed to verify the wrapped keyset's signature: %v", err)
@@ -104,7 +103,7 @@ func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.C
 	}
 
 	// Construct DecryptionMaterials with the actual delegatedKey
-	return materials.NewDecryptionMaterials(materialDescMap, delegatedKey, nil), nil
+	return materials.NewDecryptionMaterials(materialDescMap, delegatedKey), nil
 }
 
 func (p *AwsKmsCryptographicMaterialsProvider) TableName() string {

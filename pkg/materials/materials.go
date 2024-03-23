@@ -10,7 +10,6 @@ type CryptographicMaterials interface {
 	EncryptionKey() delegatedkeys.DelegatedKey
 	DecryptionKey() delegatedkeys.DelegatedKey
 	SigningKey() delegatedkeys.DelegatedKey
-	VerificationKey() delegatedkeys.DelegatedKey
 }
 
 // EncryptionMaterials defines the structure for encryption materials.
@@ -54,14 +53,12 @@ func (em *EncryptionMaterials) VerificationKey() delegatedkeys.DelegatedKey {
 type DecryptionMaterials struct {
 	materialDescription map[string]string
 	decryptionKey       delegatedkeys.DelegatedKey
-	verificationKey     delegatedkeys.DelegatedKey
 }
 
-func NewDecryptionMaterials(description map[string]string, decryptionKey, verificationKey delegatedkeys.DelegatedKey) CryptographicMaterials {
+func NewDecryptionMaterials(description map[string]string, decryptionKey delegatedkeys.DelegatedKey) CryptographicMaterials {
 	return &DecryptionMaterials{
 		materialDescription: description,
 		decryptionKey:       decryptionKey,
-		verificationKey:     verificationKey,
 	}
 }
 
@@ -81,8 +78,4 @@ func (dm *DecryptionMaterials) DecryptionKey() delegatedkeys.DelegatedKey {
 // SigningKey panics because DecryptionMaterials does not provide a signing key.
 func (dm *DecryptionMaterials) SigningKey() delegatedkeys.DelegatedKey {
 	panic("Decryption materials do not provide signing keys.")
-}
-
-func (dm *DecryptionMaterials) VerificationKey() delegatedkeys.DelegatedKey {
-	return dm.verificationKey
 }

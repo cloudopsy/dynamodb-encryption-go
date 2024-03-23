@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/tink-crypto/tink-go-awskms/integration/awskms"
 	"github.com/tink-crypto/tink-go/v2/aead"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"github.com/tink-crypto/tink-go/v2/signature"
+	"github.com/tink-crypto/tink-go/v2/tink"
 )
 
 // DelegatedKey is an interface for keys that support encryption, decryption, signing,
@@ -29,16 +31,17 @@ type DelegatedKey interface {
 	// Sign signs the given data using the algorithm specified by the key.
 	Sign(data []byte) (signature []byte, err error)
 
-	// Verify verifies the given signature for the data using the algorithm specified by the key.
-	Verify(signature []byte, data []byte) (valid bool, err error)
-
 	// WrapKeyset wraps the keyset using the algorithm specified by the key.
 	WrapKeyset() (wrappedKeyset []byte, err error)
 }
 
 type TinkDelegatedKey struct {
-	keysetHandle *keyset.Handle
-	kekUri       string
+	keysetHandle    *keyset.Handle
+	kekUri          string
+	aeadPrimitive   tink.AEAD
+	signerPrimitive tink.Signer
+	aeadOnce        sync.Once
+	signerOnce      sync.Once
 }
 
 func NewTinkDelegatedKey(kh *keyset.Handle, kekUri string) *TinkDelegatedKey {
@@ -55,13 +58,30 @@ func (dk *TinkDelegatedKey) Algorithm() string {
 	return "Unknown"
 }
 
+// getAEADPrimitive lazily initializes the AEAD primitive.
+func (dk *TinkDelegatedKey) getAEADPrimitive() (tink.AEAD, error) {
+	var err error
+	dk.aeadOnce.Do(func() {
+		dk.aeadPrimitive, err = aead.New(dk.keysetHandle)
+	})
+	return dk.aeadPrimitive, err
+}
+
+// getSignerPrimitive lazily initializes the Signer primitive.
+func (dk *TinkDelegatedKey) getSignerPrimitive() (tink.Signer, error) {
+	var err error
+	dk.signerOnce.Do(func() {
+		dk.signerPrimitive, err = signature.NewSigner(dk.keysetHandle)
+	})
+	return dk.signerPrimitive, err
+}
+
 func (dk *TinkDelegatedKey) AllowedForRawMaterials() bool {
 	return true
 }
 
 func (dk *TinkDelegatedKey) Encrypt(plaintext []byte, associatedData []byte) ([]byte, error) {
-	// TODO: Support AEAD and DAEAD primitives
-	a, err := aead.New(dk.keysetHandle)
+	a, err := dk.getAEADPrimitive()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
 	}
@@ -69,8 +89,7 @@ func (dk *TinkDelegatedKey) Encrypt(plaintext []byte, associatedData []byte) ([]
 }
 
 func (dk *TinkDelegatedKey) Decrypt(ciphertext []byte, associatedData []byte) ([]byte, error) {
-	// TODO: Support AEAD and DAEAD primitives
-	a, err := aead.New(dk.keysetHandle)
+	a, err := dk.getAEADPrimitive()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
 	}
@@ -79,7 +98,7 @@ func (dk *TinkDelegatedKey) Decrypt(ciphertext []byte, associatedData []byte) ([
 
 // Sign signs the given data using the keyset's primary key.
 func (dk *TinkDelegatedKey) Sign(data []byte) ([]byte, error) {
-	signer, err := signature.NewSigner(dk.keysetHandle)
+	signer, err := dk.getSignerPrimitive()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signer: %v", err)
 	}
@@ -88,19 +107,6 @@ func (dk *TinkDelegatedKey) Sign(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to sign data: %v", err)
 	}
 	return signature, nil
-}
-
-// Verify verifies the given signature for the data using the keyset's primary key.
-func (dk *TinkDelegatedKey) Verify(sign []byte, data []byte) (bool, error) {
-	verifier, err := signature.NewVerifier(dk.keysetHandle)
-	if err != nil {
-		return false, fmt.Errorf("failed to create verifier: %v", err)
-	}
-	err = verifier.Verify(sign, data)
-	if err != nil {
-		return false, fmt.Errorf("failed to verify signature: %v", err)
-	}
-	return true, nil
 }
 
 // WrapKeyset wraps the Tink keyset with the KEK.

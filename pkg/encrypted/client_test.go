@@ -162,10 +162,12 @@ func TestEncryptedClient_PutItem(t *testing.T) {
 		nil,
 	), nil)
 
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
 
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	item := map[string]types.AttributeValue{
 		"PK":         &types.AttributeValueMemberS{Value: "123"},
@@ -189,10 +191,12 @@ func TestEncryptedClient_PutItem(t *testing.T) {
 func TestEncryptedClient_PutItem_Failure(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
 
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock the DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -235,10 +239,12 @@ func TestEncryptedClient_PutItem_Failure(t *testing.T) {
 func TestEncryptedClient_GetItem_Success(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
 
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -264,7 +270,6 @@ func TestEncryptedClient_GetItem_Success(t *testing.T) {
 	mockCMProvider.On("DecryptionMaterials", mock.Anything, mock.Anything, mock.Anything).Return(materials.NewDecryptionMaterials(
 		map[string]string{"mock": "data"},
 		&MockDelegatedKey{},
-		nil,
 	), nil)
 
 	// Test GetItem
@@ -286,9 +291,12 @@ func TestEncryptedClient_GetItem_Success(t *testing.T) {
 func TestEncryptedClient_Query(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -320,7 +328,6 @@ func TestEncryptedClient_Query(t *testing.T) {
 	mockCMProvider.On("DecryptionMaterials", mock.Anything, mock.Anything, mock.Anything).Return(materials.NewDecryptionMaterials(
 		map[string]string{"mock": "data"},
 		&MockDelegatedKey{},
-		nil,
 	), nil)
 
 	// Test Query
@@ -342,9 +349,12 @@ func TestEncryptedClient_Query(t *testing.T) {
 func TestEncryptedClient_Scan(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -376,7 +386,6 @@ func TestEncryptedClient_Scan(t *testing.T) {
 	mockCMProvider.On("DecryptionMaterials", mock.Anything, mock.Anything, mock.Anything).Return(materials.NewDecryptionMaterials(
 		map[string]string{"mock": "data"},
 		&MockDelegatedKey{},
-		nil,
 	), nil)
 
 	// Test Scan
@@ -394,9 +403,12 @@ func TestEncryptedClient_Scan(t *testing.T) {
 func TestEncryptedClient_BatchGetItem(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -430,7 +442,6 @@ func TestEncryptedClient_BatchGetItem(t *testing.T) {
 	mockCMProvider.On("DecryptionMaterials", mock.Anything, mock.Anything, mock.Anything).Return(materials.NewDecryptionMaterials(
 		map[string]string{"mock": "data"},
 		&MockDelegatedKey{},
-		nil,
 	), nil)
 
 	// Test BatchGetItem
@@ -461,9 +472,12 @@ func TestEncryptedClient_BatchGetItem(t *testing.T) {
 func TestEncryptedClient_BatchWriteItem(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
@@ -520,9 +534,12 @@ func TestEncryptedClient_BatchWriteItem(t *testing.T) {
 func TestEncryptedClient_DeleteItem(t *testing.T) {
 	mockDynamoDBClient := new(MockDynamoDBClient)
 	mockCMProvider := new(MockCryptographicMaterialsProvider)
-	attributeActions := NewAttributeActions(AttributeActionDoNothing)
-	attributeActions.SetAttributeAction("SensitiveAttribute", AttributeActionEncrypt)
-	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, attributeActions)
+	clientConfig := NewClientConfig(
+		WithDefaultEncryption(EncryptNone),
+		WithEncryption("SensitiveAttribute", EncryptStandard),
+	)
+
+	encryptedClient := NewEncryptedClient(mockDynamoDBClient, mockCMProvider, clientConfig)
 
 	// Mock DescribeTable call to simulate fetching table primary key schema.
 	mockDynamoDBClient.On("DescribeTable", mock.Anything, mock.AnythingOfType("*dynamodb.DescribeTableInput"), mock.Anything).Return(&dynamodb.DescribeTableOutput{
