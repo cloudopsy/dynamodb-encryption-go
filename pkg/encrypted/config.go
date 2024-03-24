@@ -4,58 +4,33 @@ package encrypted
 type EncryptionAction int
 
 const (
-	// EncryptNone indicates that no encryption should be applied.
-	EncryptNone EncryptionAction = iota
-	// EncryptStandard indicates the attribute should be encrypted using a standard algorithm.
-	EncryptStandard
-	// EncryptDeterministic indicates the attribute should be encrypted deterministically for consistent outcomes.
-	EncryptDeterministic
+	EncryptNone          EncryptionAction = iota // No encryption should be applied.
+	EncryptStandard                              // The attribute should be encrypted using a standard algorithm.
+	EncryptDeterministic                         // The attribute should be encrypted deterministically for consistent outcomes.
 	// Additional encryption actions can be defined here.
 )
 
-// CompressionAction represents the compression action to be taken on a specific attribute.
-type CompressionAction int
-
-const (
-	// CompressNone indicates no compression should be applied.
-	CompressNone CompressionAction = iota
-	// CompressGzip indicates the attribute should be compressed using GZip.
-	CompressGzip
-	// CompressZstd indicates the attribute should be compressed using Zstd.
-	CompressZstd
-)
-
-// ClientConfig holds the configuration for client operations like encryption and compression.
+// ClientConfig holds the configuration for client operations, focusing on encryption.
 type ClientConfig struct {
-	Encryption  EncryptionConfig
-	Compression CompressionConfig
+	Encryption EncryptionConfig
 }
 
-// EncryptionConfig holds encryption-specific settings.
+// EncryptionConfig holds encryption-specific settings, including a default action and specific actions for named attributes.
 type EncryptionConfig struct {
-	DefaultAction   EncryptionAction
-	SpecificActions map[string]EncryptionAction
+	DefaultAction   EncryptionAction            // The default encryption action if no specific action is provided.
+	SpecificActions map[string]EncryptionAction // Map of attribute names to their specific encryption actions.
 }
 
-// CompressionConfig holds compression-specific settings.
-type CompressionConfig struct {
-	DefaultAction   CompressionAction
-	SpecificActions map[string]CompressionAction
-}
-
-// NewClientConfig creates a new ClientConfig with provided options.
+// NewClientConfig initializes a new ClientConfig, applying any provided functional options.
 func NewClientConfig(options ...Option) *ClientConfig {
 	config := &ClientConfig{
 		Encryption: EncryptionConfig{
-			DefaultAction:   EncryptNone,
+			DefaultAction:   EncryptNone, // Default to no encryption unless specified.
 			SpecificActions: make(map[string]EncryptionAction),
-		},
-		Compression: CompressionConfig{
-			DefaultAction:   CompressNone,
-			SpecificActions: make(map[string]CompressionAction),
 		},
 	}
 
+	// Apply each provided option to the ClientConfig.
 	for _, option := range options {
 		option(config)
 	}
@@ -63,7 +38,7 @@ func NewClientConfig(options ...Option) *ClientConfig {
 	return config
 }
 
-// Option applies a configuration to a ClientConfig.
+// Option defines a function signature for options that modify ClientConfig.
 type Option func(*ClientConfig)
 
 // WithDefaultEncryptionAction sets the default encryption action for the client.
@@ -73,12 +48,19 @@ func WithDefaultEncryption(action EncryptionAction) Option {
 	}
 }
 
-// WithEncryption sets an encryption action for a specific attribute.
+// WithEncryption sets a specific encryption action for a named attribute.
 func WithEncryption(attributeName string, action EncryptionAction) Option {
 	return func(c *ClientConfig) {
-		if c.Encryption.SpecificActions == nil {
-			c.Encryption.SpecificActions = make(map[string]EncryptionAction)
-		}
 		c.Encryption.SpecificActions[attributeName] = action
+	}
+}
+
+// EncryptedClientOption defines a function signature for options that modify an EncryptedClient.
+type EncryptedClientOption func(*EncryptedClient)
+
+// WithClientConfig sets the EncryptedClient's configuration.
+func WithClientConfig(config *ClientConfig) EncryptedClientOption {
+	return func(ec *EncryptedClient) {
+		ec.ClientConfig = config
 	}
 }

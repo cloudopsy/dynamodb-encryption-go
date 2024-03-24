@@ -54,6 +54,9 @@ func main() {
 	// Initialize EncryptedClient
 	ec := encrypted.NewEncryptedClient(dynamoDBClient, cmp, clientConfig)
 
+	// Create an EncryptedTable instance
+	et := encrypted.NewEncryptedTable(ec)
+
 	// User credentials to encrypt and store
 	userID := "user1"
 	credentials := map[string]types.AttributeValue{
@@ -192,6 +195,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed during paginated scan: %v", err)
 	}
+
+	// Put encrypted item using EncryptedTable
+	if err := et.PutItem(ctx, tableName, credentials); err != nil {
+		log.Fatalf("Failed to put encrypted item: %v", err)
+	}
+	fmt.Println("Encrypted item put successfully.")
+
+	// Get and decrypt item using EncryptedTable
+	decryptedItem, err := et.GetItem(ctx, tableName, map[string]types.AttributeValue{
+		"UserID": &types.AttributeValueMemberS{Value: userID},
+	})
+	if err != nil {
+		log.Fatalf("Failed to get and decrypt item: %v", err)
+	}
+	fmt.Printf("Decrypted item: %v\n", decryptedItem)
 
 }
 

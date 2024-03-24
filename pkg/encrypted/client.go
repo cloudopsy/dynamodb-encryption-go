@@ -107,15 +107,23 @@ type EncryptedClient struct {
 }
 
 // NewEncryptedClient creates a new instance of EncryptedClient.
-func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provider.CryptographicMaterialsProvider, config *ClientConfig) *EncryptedClient {
-	return &EncryptedClient{
+func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provider.CryptographicMaterialsProvider, opts ...EncryptedClientOption) *EncryptedClient {
+
+	ec := &EncryptedClient{
 		Client:            client,
 		MaterialsProvider: materialsProvider,
 		PrimaryKeyCache:   make(map[string]*PrimaryKeyInfo),
-		ClientConfig:      config,
-
-		lock: sync.RWMutex{},
+		ClientConfig:      NewClientConfig(WithDefaultEncryption(EncryptStandard)),
+		lock:              sync.RWMutex{},
 	}
+
+	// Apply each option to the instance
+	for _, opt := range opts {
+		opt(ec)
+	}
+
+	return ec
+
 }
 
 // CreateTable creates a new DynamoDB table with the specified name, attribute definitions, and key schema.
