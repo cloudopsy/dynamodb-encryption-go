@@ -121,20 +121,6 @@ result, err := encryptedClient.Query(context.TODO(), input)
 
 The EncryptedClient transparently encrypts and decrypts items based on the specified encryption options in the ClientConfig. It also handles the storage and retrieval of metadata using the MetaStore.
 
-## MetaStore
-
-The MetaStore is responsible for storing and retrieving metadata associated with encrypted items. It uses a separate DynamoDB table to store the metadata, which includes the encrypted data keys and other relevant information.
-
-When an item is encrypted, the EncryptedClient generates a unique material name based on the item's primary key and stores the encrypted data key and metadata in the MetaStore. When decrypting an item, the EncryptedClient retrieves the corresponding metadata from the MetaStore to obtain the necessary decryption materials.
-
-The MetaStore provides the following key functions:
-
-- **StoreNewMaterial**: Stores new encryption metadata for an item.
-- **RetrieveMaterial**: Retrieves the encryption metadata for an item based on its material name and version.
-- **CreateTableIfNotExists**: Creates the metadata table if it doesn't exist.
-
-The MetaStore ensures that the encryption metadata is securely stored and can be accessed efficiently during encryption and decryption operations.
-
 ## Contributing
 
 Contributions to this library are welcome! If you find a bug, have a feature request, or want to contribute code improvements, please open an issue or submit a pull request on the GitHub repository.
