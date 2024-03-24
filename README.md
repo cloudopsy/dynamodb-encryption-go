@@ -14,7 +14,7 @@ This is a Go library that provides an encrypted client for interacting with Amaz
 
 ## Encryption Details
 
-This library uses the Tink cryptographic library for performing encryption and decryption operations. Tink provides a set of high-level APIs for common cryptographic tasks and supports a wide range of encryption algorithms.
+This library uses the [Tink](https://github.com/tink-crypto/tink-go) cryptographic library for performing encryption and decryption operations. Tink provides a set of high-level APIs for common cryptographic tasks and supports a wide range of encryption algorithms.
 
 The default encryption algorithm used by this library is AES-256-GCM (Advanced Encryption Standard with 256-bit keys and Galois/Counter Mode). AES-256-GCM provides authenticated encryption, ensuring both confidentiality and integrity of the encrypted data.
 
