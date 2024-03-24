@@ -41,59 +41,99 @@ Here's a basic example of how to use the EncryptedClient to perform encrypted Dy
 
 ```go
 import (
-    "context"
+    "github.com/aws/aws-sdk-go-v2/config"
     "github.com/aws/aws-sdk-go-v2/service/dynamodb"
     "github.com/cloudopsy/dynamodb-encryption-go/pkg/encrypted"
     "github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
 )
 
 func main() {
-    // Create a regular DynamoDB client
+    // Create a new AWS session
+    cfg, err := config.LoadDefaultConfig(context.TODO())
+    if err != nil {
+        log.Fatalf("failed to load AWS configuration: %v", err)
+    }
+
+    // Create a DynamoDB client
     dynamodbClient := dynamodb.NewFromConfig(cfg)
 
-    // Create a key material store
-    materialStore, err := store.NewMetaStore(dynamodbClient, "metastore-table")
+    // Create a MetaStore for storing and retrieving metadata
+    metaStore, err := store.NewMetaStore(dynamodbClient, "metadata-table")
     if err != nil {
-        log.Fatalf("Failed to create key material store: %v", err)
-    }
-    if err := materialStore.CreateTableIfNotExists(context.Background()); err != nil {
-        log.Fatalf("Failed to ensure metastore table exists: %v", err)
+        log.Fatalf("failed to create MetaStore: %v", err)
     }
 
-    // Create a cryptographic materials provider
-    keyURI := "aws-kms://arn:aws:kms:eu-west-2:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    cmp, err := provider.NewAwsKmsCryptographicMaterialsProvider(keyURI, nil, materialStore)
+    // Create a CryptographicMaterialsProvider with the desired key provider (e.g., AWS KMS)
+    keyARN := "arn:aws:kms:us-west-2:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    cmProvider, err := provider.NewAwsKmsCryptographicMaterialsProvider(keyARN, nil, metaStore)
     if err != nil {
-        log.Fatalf("Failed to create cryptographic materials provider: %v", err)
+        log.Fatalf("failed to create CryptographicMaterialsProvider: %v", err)
     }
 
-    // Create an encrypted DynamoDB client
-   clientConfig := encrypted.NewClientConfig(
-        encrypted.WithDefaultEncryption(encrypted.EncryptStandard),
- . }
-   encryptedClient := encrypted.NewEncryptedClient(dynamodbClient, cmp, clientConfig)
+    // Create a ClientConfig with the desired encryption options
+    clientConfig := encrypted.NewClientConfig(
+        encrypted.WithDefaultEncryption(encrypted.EncryptNone),
+        encrypted.WithEncryption("SensitiveAttribute", encrypted.EncryptStandard),
+    )
 
-    // Perform encrypted DynamoDB operations
-    putItemInput := &dynamodb.PutItemInput{
-        TableName: aws.String("my-table"),
-        Item: map[string]types.AttributeValue{
-            "PK":            &types.AttributeValueMemberS{Value: "123"},
-            "SK":            &types.AttributeValueMemberS{Value: "456"},
-            "SensitiveData": &types.AttributeValueMemberS{Value: "my secret data"},
-        },
-    }
-    _, err = encryptedClient.PutItem(context.Background(), putItemInput)
-    if err != nil {
-        log.Fatalf("Failed to put encrypted item: %v", err)
-    }
-
-    // ... perform other operations ...
+    // Create an EncryptedClient
+    encryptedClient := encrypted.NewEncryptedClient(dynamodbClient, cmProvider, clientConfig)
 }
 ```
 
-In this example, we create a regular `dynamodb.Client`, a key material store, and a cryptographic materials provider. Then, we create an `EncryptedClient` instance with custom attribute actions to specify which attributes should be encrypted. Finally, we use the `EncryptedClient` to perform operations like PutItem, and the library automatically handles the encryption and decryption of sensitive data.
+Encrypting and Decrypting Items
 
-For more detailed examples and usage instructions, please refer to the documentation and the examples directory in the repository.
+With the EncryptedClient, you can perform various DynamoDB operations on encrypted items:
+
+```go
+// PutItem
+item := map[string]types.AttributeValue{
+    "ID":   {S: aws.String("123")},
+    "Name": {S: aws.String("John")},
+    "SensitiveAttribute": {S: aws.String("Sensitive Value")},
+}
+input := &dynamodb.PutItemInput{
+    TableName: aws.String("my-table"),
+    Item:      item,
+}
+_, err := encryptedClient.PutItem(context.TODO(), input)
+
+// GetItem
+key := map[string]types.AttributeValue{
+    "ID": {S: aws.String("123")},
+}
+input := &dynamodb.GetItemInput{
+    TableName: aws.String("my-table"),
+    Key:       key,
+}
+result, err := encryptedClient.GetItem(context.TODO(), input)
+
+// Query
+input := &dynamodb.QueryInput{
+    TableName: aws.String("my-table"),
+    KeyConditionExpression: aws.String("ID = :id"),
+    ExpressionAttributeValues: map[string]types.AttributeValue{
+        ":id": {S: aws.String("123")},
+    },
+}
+result, err := encryptedClient.Query(context.TODO(), input)
+```
+
+The EncryptedClient transparently encrypts and decrypts items based on the specified encryption options in the ClientConfig. It also handles the storage and retrieval of metadata using the MetaStore.
+
+## MetaStore
+
+The MetaStore is responsible for storing and retrieving metadata associated with encrypted items. It uses a separate DynamoDB table to store the metadata, which includes the encrypted data keys and other relevant information.
+
+When an item is encrypted, the EncryptedClient generates a unique material name based on the item's primary key and stores the encrypted data key and metadata in the MetaStore. When decrypting an item, the EncryptedClient retrieves the corresponding metadata from the MetaStore to obtain the necessary decryption materials.
+
+The MetaStore provides the following key functions:
+
+- **StoreNewMaterial**: Stores new encryption metadata for an item.
+- **RetrieveMaterial**: Retrieves the encryption metadata for an item based on its material name and version.
+- **CreateTableIfNotExists**: Creates the metadata table if it doesn't exist.
+
+The MetaStore ensures that the encryption metadata is securely stored and can be accessed efficiently during encryption and decryption operations.
 
 ## Contributing
 
