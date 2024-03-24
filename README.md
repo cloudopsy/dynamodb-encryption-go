@@ -68,9 +68,10 @@ func main() {
     }
 
     // Create an encrypted DynamoDB client
-    attributeActions := encrypted.NewAttributeActions(encrypted.AttributeActionDoNothing)
-    attributeActions.SetAttributeAction("SensitiveData", encrypted.AttributeActionEncrypt)
-    encryptedClient := encrypted.NewEncryptedClient(dynamodbClient, cmp, attributeActions)
+   clientConfig := encrypted.NewClientConfig(
+     encrypted.WithDefaultEncryption(encrypted.EncryptStandard),
+ . }
+   encryptedClient := encrypted.NewEncryptedClient(dynamodbClient, cmp, attributeActions)
 
     // Perform encrypted DynamoDB operations
     putItemInput := &dynamodb.PutItemInput{
