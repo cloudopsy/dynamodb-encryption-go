@@ -7,7 +7,6 @@ const (
 	EncryptNone          EncryptionAction = iota // No encryption should be applied.
 	EncryptStandard                              // The attribute should be encrypted using a standard algorithm.
 	EncryptDeterministic                         // The attribute should be encrypted deterministically for consistent outcomes.
-	// Additional encryption actions can be defined here.
 )
 
 // ClientConfig holds the configuration for client operations, focusing on encryption.
