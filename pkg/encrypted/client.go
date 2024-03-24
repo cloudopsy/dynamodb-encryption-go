@@ -13,6 +13,7 @@ import (
 )
 
 type DynamoDBClientInterface interface {
+	CreateTable(ctx context.Context, input *dynamodb.CreateTableInput, opts ...func(*dynamodb.Options)) (*dynamodb.CreateTableOutput, error)
 	PutItem(ctx context.Context, input *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	GetItem(ctx context.Context, input *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	Query(ctx context.Context, input *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
@@ -117,6 +118,11 @@ func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provid
 	}
 }
 
+// CreateTable creates a new DynamoDB table with the specified name, attribute definitions, and key schema.
+func (ec *EncryptedClient) CreateTable(ctx context.Context, input *dynamodb.CreateTableInput) (*dynamodb.CreateTableOutput, error) {
+	return ec.Client.CreateTable(ctx, input)
+}
+
 func (ec *EncryptedClient) GetPaginator(operationName string) (*EncryptedPaginator, error) {
 	if operationName != "Query" && operationName != "Scan" {
 		return nil, fmt.Errorf("unsupported operation for pagination: %s", operationName)
@@ -201,24 +207,6 @@ func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput
 		LastEvaluatedKey: lastEvaluatedKey,
 	}, nil
 }
-
-// func (ec *EncryptedClient) Query(ctx context.Context, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-// 	encryptedOutput, err := ec.Client.Query(ctx, input)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("error querying encrypted items: %v", err)
-// 	}
-
-// 	// Decrypt the items in the response
-// 	for i, item := range encryptedOutput.Items {
-// 		decryptedItem, decryptErr := ec.decryptItem(ctx, aws.StringValue(input.TableName), item)
-// 		if decryptErr != nil {
-// 			return nil, decryptErr
-// 		}
-// 		encryptedOutput.Items[i] = decryptedItem
-// 	}
-
-// 	return encryptedOutput, nil
-// }
 
 // Scan executes a Scan operation on DynamoDB and decrypts the returned items.
 func (ec *EncryptedClient) Scan(ctx context.Context, input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {

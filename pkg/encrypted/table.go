@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go/aws"
 )
 
 // EncryptedTable provides a high-level interface to encrypted DynamoDB operations.
@@ -48,30 +49,41 @@ func (et *EncryptedTable) GetItem(ctx context.Context, tableName string, key map
 
 // Query executes a Query operation on the DynamoDB table and decrypts the returned items.
 func (et *EncryptedTable) Query(ctx context.Context, tableName string, input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-	// Set the table name for the query input
 	input.TableName = &tableName
 
-	// Execute the query through the EncryptedClient
 	encryptedOutput, err := et.client.Query(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error querying encrypted items: %w", err)
 	}
 
-	// The items are already decrypted by EncryptedClient.Query, return the result directly
 	return encryptedOutput, nil
 }
 
 // Scan executes a Scan operation on the DynamoDB table and decrypts the returned items.
 func (et *EncryptedTable) Scan(ctx context.Context, tableName string, input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
-	// Set the table name for the scan input
 	input.TableName = &tableName
 
-	// Execute the scan through the EncryptedClient
 	encryptedOutput, err := et.client.Scan(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("error scanning encrypted items: %w", err)
 	}
 
-	// The items are already decrypted by EncryptedClient. Scan, return the result directly
 	return encryptedOutput, nil
+}
+
+// CreateTable creates a new DynamoDB table with the specified name, attribute definitions, and key schema.
+func (et *EncryptedTable) CreateTable(ctx context.Context, tableName string, attributes []types.AttributeDefinition, keySchema []types.KeySchemaElement) error {
+	input := &dynamodb.CreateTableInput{
+		AttributeDefinitions: attributes,
+		KeySchema:            keySchema,
+		BillingMode:          types.BillingModePayPerRequest,
+		TableName:            aws.String(tableName),
+	}
+
+	_, err := et.client.CreateTable(ctx, input)
+	if err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+
+	return nil
 }
