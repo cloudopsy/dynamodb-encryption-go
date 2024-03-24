@@ -12,6 +12,17 @@ This is a Go library that provides an encrypted client for interacting with Amaz
 - High-level interface for working with encrypted DynamoDB tables
 - Pagination support for Query and Scan operations
 
+## Encryption Details
+
+Encryption Details
+This library uses the Tink cryptographic library for performing encryption and decryption operations. Tink provides a set of high-level APIs for common cryptographic tasks and supports a wide range of encryption algorithms.
+The default encryption algorithm used by this library is AES-256-GCM (Advanced Encryption Standard with 256-bit keys and Galois/Counter Mode). AES-256-GCM provides authenticated encryption, ensuring both confidentiality and integrity of the encrypted data.
+For key management, this library integrates with AWS Key Management Service (KMS). The cryptographic materials, including encryption keys and signing keys, are protected using customer master keys (CMKs) stored in AWS KMS. This allows for secure key generation, storage, and rotation.
+The library supports two types of encryption:
+Standard Encryption: Each attribute is encrypted independently using a unique data key. This provides strong confidentiality but does not preserve the order or equality of the encrypted values.
+Deterministic Encryption: Attributes are encrypted using a deterministic algorithm, which produces the same ciphertext for the same plaintext input. This allows for equality comparison of encrypted values but may leak some information about the data.
+The choice between standard and deterministic encryption can be made on a per-attribute basis using attribute actions.
+
 ## Installation
 
 To use this library in your Go project, you can install it using go get:
