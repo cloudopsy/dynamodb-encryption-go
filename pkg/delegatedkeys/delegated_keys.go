@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	fakeawskms "github.com/cloudopsy/dynamodb-encryption-go/internal/fakekms"
 	"github.com/tink-crypto/tink-go-awskms/integration/awskms"
 	"github.com/tink-crypto/tink-go/v2/aead"
 	"github.com/tink-crypto/tink-go/v2/keyset"
@@ -37,43 +38,27 @@ type DelegatedKey interface {
 
 type TinkDelegatedKey struct {
 	keysetHandle    *keyset.Handle
-	kekUri          string
+	kek             tink.AEAD
 	aeadPrimitive   tink.AEAD
 	signerPrimitive tink.Signer
 	aeadOnce        sync.Once
 	signerOnce      sync.Once
 }
 
-func NewTinkDelegatedKey(kh *keyset.Handle, kekUri string) *TinkDelegatedKey {
-	return &TinkDelegatedKey{keysetHandle: kh, kekUri: kekUri}
+func NewTinkDelegatedKey(kh *keyset.Handle, kek tink.AEAD) *TinkDelegatedKey {
+	return &TinkDelegatedKey{
+		keysetHandle: kh,
+		kek:          kek,
+	}
 }
 
 func (dk *TinkDelegatedKey) Algorithm() string {
-	typeUrl := dk.keysetHandle.KeysetInfo().KeyInfo[0].TypeUrl
-
-	parts := strings.Split(typeUrl, ".")
+	typeURL := dk.keysetHandle.KeysetInfo().KeyInfo[0].TypeUrl
+	parts := strings.Split(typeURL, ".")
 	if len(parts) > 0 {
 		return parts[len(parts)-1]
 	}
 	return "Unknown"
-}
-
-// getAEADPrimitive lazily initializes the AEAD primitive.
-func (dk *TinkDelegatedKey) getAEADPrimitive() (tink.AEAD, error) {
-	var err error
-	dk.aeadOnce.Do(func() {
-		dk.aeadPrimitive, err = aead.New(dk.keysetHandle)
-	})
-	return dk.aeadPrimitive, err
-}
-
-// getSignerPrimitive lazily initializes the Signer primitive.
-func (dk *TinkDelegatedKey) getSignerPrimitive() (tink.Signer, error) {
-	var err error
-	dk.signerOnce.Do(func() {
-		dk.signerPrimitive, err = signature.NewSigner(dk.keysetHandle)
-	})
-	return dk.signerPrimitive, err
 }
 
 func (dk *TinkDelegatedKey) AllowedForRawMaterials() bool {
@@ -81,22 +66,21 @@ func (dk *TinkDelegatedKey) AllowedForRawMaterials() bool {
 }
 
 func (dk *TinkDelegatedKey) Encrypt(plaintext []byte, associatedData []byte) ([]byte, error) {
-	a, err := dk.getAEADPrimitive()
+	aead, err := dk.getAEADPrimitive()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
 	}
-	return a.Encrypt(plaintext, associatedData)
+	return aead.Encrypt(plaintext, associatedData)
 }
 
 func (dk *TinkDelegatedKey) Decrypt(ciphertext []byte, associatedData []byte) ([]byte, error) {
-	a, err := dk.getAEADPrimitive()
+	aead, err := dk.getAEADPrimitive()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AEAD primitive: %v", err)
 	}
-	return a.Decrypt(ciphertext, associatedData)
+	return aead.Decrypt(ciphertext, associatedData)
 }
 
-// Sign signs the given data using the keyset's primary key.
 func (dk *TinkDelegatedKey) Sign(data []byte) ([]byte, error) {
 	signer, err := dk.getSignerPrimitive()
 	if err != nil {
@@ -109,108 +93,110 @@ func (dk *TinkDelegatedKey) Sign(data []byte) ([]byte, error) {
 	return signature, nil
 }
 
-// WrapKeyset wraps the Tink keyset with the KEK.
 func (dk *TinkDelegatedKey) WrapKeyset() ([]byte, error) {
-	client, err := awskms.NewClientWithOptions(dk.kekUri)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create KMS client: %v", err)
-	}
-	kekAEAD, err := client.GetAEAD(dk.kekUri)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get KEK AEAD: %v", err)
-	}
-
 	buf := new(bytes.Buffer)
 	writer := keyset.NewBinaryWriter(buf)
-	if err := dk.keysetHandle.Write(writer, kekAEAD); err != nil {
+	if err := dk.keysetHandle.Write(writer, dk.kek); err != nil {
 		return nil, fmt.Errorf("failed to wrap keyset: %v", err)
 	}
-
 	return buf.Bytes(), nil
 }
 
-// UnwrapKeyset unwraps the Tink keyset using the KEK.
-func UnwrapKeyset(encryptedKeyset []byte, kekUri string) (*TinkDelegatedKey, error) {
-	client, err := awskms.NewClientWithOptions(kekUri)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create KMS client: %v", err)
-	}
-	kekAEAD, err := client.GetAEAD(kekUri)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get KEK AEAD: %v", err)
-	}
-
+func UnwrapKeyset(encryptedKeyset []byte, kek tink.AEAD) (*TinkDelegatedKey, error) {
 	reader := keyset.NewBinaryReader(bytes.NewReader(encryptedKeyset))
-	handle, err := keyset.Read(reader, kekAEAD)
+	handle, err := keyset.Read(reader, kek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unwrap keyset: %v", err)
 	}
-
-	return NewTinkDelegatedKey(handle, kekUri), nil
+	return NewTinkDelegatedKey(handle, kek), nil
 }
 
-func GenerateDataKey(keyURI string) (*TinkDelegatedKey, []byte, error) {
+func GenerateDataKey(kek tink.AEAD) (*TinkDelegatedKey, []byte, error) {
 	kh, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
-
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate new keyset handle: %v", err)
 	}
-
-	delegatedKey := NewTinkDelegatedKey(kh, keyURI)
+	delegatedKey := NewTinkDelegatedKey(kh, kek)
 	wrappedKeyset, err := delegatedKey.WrapKeyset()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to wrap keyset: %v", err)
 	}
-
 	return delegatedKey, wrappedKeyset, nil
 }
 
-func GenerateSigningKey(keyURI string) (*TinkDelegatedKey, []byte, []byte, error) {
+func GenerateSigningKey(kek tink.AEAD) (*TinkDelegatedKey, []byte, []byte, error) {
 	kh, err := keyset.NewHandle(signature.ECDSAP256KeyTemplate())
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to generate new keyset handle: %v", err)
 	}
-
-	// Extract the public key
 	publicKeysetHandle, err := kh.Public()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to extract public key: %v", err)
 	}
-
 	var publicKeyBytes bytes.Buffer
 	publicKeyWriter := keyset.NewBinaryWriter(&publicKeyBytes)
 	if err := publicKeysetHandle.WriteWithNoSecrets(publicKeyWriter); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to serialize public key: %v", err)
 	}
-
-	delegatedKey := NewTinkDelegatedKey(kh, keyURI)
+	delegatedKey := NewTinkDelegatedKey(kh, kek)
 	wrappedKeyset, err := delegatedKey.WrapKeyset()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to wrap keyset: %v", err)
 	}
-
 	return delegatedKey, wrappedKeyset, publicKeyBytes.Bytes(), nil
 }
 
 func VerifySignature(publicKeyBytes, sig, data []byte) (bool, error) {
-	// Load the public key into a keyset.Handle
 	publicKeyReader := keyset.NewBinaryReader(bytes.NewReader(publicKeyBytes))
 	publicKeyHandle, err := keyset.ReadWithNoSecrets(publicKeyReader)
 	if err != nil {
 		return false, fmt.Errorf("failed to load public key: %v", err)
 	}
-
-	// Get a Verifier instance from the public key handle
 	verifier, err := signature.NewVerifier(publicKeyHandle)
 	if err != nil {
 		return false, fmt.Errorf("failed to get verifier: %v", err)
 	}
-
-	// Verify the signature
 	err = verifier.Verify(sig, data)
 	if err != nil {
 		return false, nil
 	}
-
 	return true, nil
+}
+
+func GetKEK(kmsKeyARN string, isTesting bool) (tink.AEAD, error) {
+	if isTesting {
+		// Use fake-kms for testing
+		fakekms, err := fakeawskms.New([]string{kmsKeyARN})
+		if err != nil {
+			return nil, err
+		}
+		client, err := awskms.NewClientWithOptions("aws-kms://", awskms.WithKMS(fakekms))
+		if err != nil {
+			return nil, err
+		}
+		return client.GetAEAD("aws-kms://" + kmsKeyARN)
+	} else {
+		// Use real AWS KMS for non-testing
+		client, err := awskms.NewClientWithOptions("aws-kms://" + kmsKeyARN)
+		if err != nil {
+			return nil, err
+		}
+		return client.GetAEAD("aws-kms://" + kmsKeyARN)
+	}
+}
+
+func (dk *TinkDelegatedKey) getAEADPrimitive() (tink.AEAD, error) {
+	var err error
+	dk.aeadOnce.Do(func() {
+		dk.aeadPrimitive, err = aead.New(dk.keysetHandle)
+	})
+	return dk.aeadPrimitive, err
+}
+
+func (dk *TinkDelegatedKey) getSignerPrimitive() (tink.Signer, error) {
+	var err error
+	dk.signerOnce.Do(func() {
+		dk.signerPrimitive, err = signature.NewSigner(dk.keysetHandle)
+	})
+	return dk.signerPrimitive, err
 }

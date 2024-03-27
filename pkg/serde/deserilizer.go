@@ -17,7 +17,7 @@ func NewDeserializer() *Deserializer {
 
 func (d *Deserializer) DeserializeAttribute(data []byte) (types.AttributeValue, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("empty serialized attribute data")
+		return nil, fmt.Errorf("empty serialized data")
 	}
 	r := bytes.NewReader(data)
 	return d.deserialize(r)
@@ -175,7 +175,7 @@ func (d *Deserializer) deserializeFunction(tag Tag) (func(io.Reader) (types.Attr
 	case tagStringSet:
 		return d.deserializeStringSet, nil
 	default:
-		return nil, fmt.Errorf("unsupported tag: %q", tag)
+		return nil, fmt.Errorf("invalid tag: reserved byte is not null")
 	}
 }
 

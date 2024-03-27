@@ -16,7 +16,7 @@ import (
 
 const (
 	awsRegion         = "eu-west-2"
-	keyURI            = "aws-kms://arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
+	keyURI            = "arn:aws:kms:eu-west-2:076594877490:key/02813db0-b23a-420c-94b0-bdceb08e121b"
 	dynamoDBTableName = "meta"
 )
 

@@ -3,13 +3,12 @@ module github.com/cloudopsy/dynamodb-encryption-go
 go 1.21.7
 
 require (
-	github.com/aws/aws-sdk-go v1.51.6
+	github.com/aws/aws-sdk-go v1.51.8
 	github.com/aws/aws-sdk-go-v2 v1.26.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.9
-	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.13.11
+	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.13.12
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.31.0
-	github.com/stretchr/testify v1.9.0
-	github.com/tink-crypto/tink-go-awskms v0.0.0-20230616072154-ba4f9f22c3e9
+	github.com/google/go-cmp v0.6.0
 	github.com/tink-crypto/tink-go/v2 v2.1.0
 )
 
@@ -29,10 +28,10 @@ require (
 	github.com/aws/smithy-go v1.20.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/objx v0.5.2 // indirect
+	github.com/tink-crypto/tink-go v0.0.0-20230613075026-d6de17e3f164 // indirect
+	github.com/tink-crypto/tink-go-awskms v0.0.0-20230616072154-ba4f9f22c3e9 // indirect
+	github.com/tink-crypto/tink-go-awskms/v2 v2.0.0 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

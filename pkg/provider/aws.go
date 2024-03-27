@@ -12,17 +12,16 @@ import (
 
 // AwsKmsCryptographicMaterialsProvider uses AWS KMS for key management and Tink for cryptographic operations.
 type AwsKmsCryptographicMaterialsProvider struct {
-	KeyID             string
+	KMSKeyURI         string
 	EncryptionContext map[string]string
 	DelegatedKey      *delegatedkeys.TinkDelegatedKey
 	MaterialStore     *store.MetaStore
 }
 
 // NewAwsKmsCryptographicMaterialsProvider initializes a provider with the specified AWS KMS key ID, encryption context, and material store.
-func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map[string]string, materialStore *store.MetaStore) (CryptographicMaterialsProvider, error) {
-
+func NewAwsKmsCryptographicMaterialsProvider(keyURI string, encryptionContext map[string]string, materialStore *store.MetaStore) (CryptographicMaterialsProvider, error) {
 	return &AwsKmsCryptographicMaterialsProvider{
-		KeyID:             keyID,
+		KMSKeyURI:         keyURI,
 		EncryptionContext: encryptionContext,
 		MaterialStore:     materialStore,
 	}, nil
@@ -30,16 +29,22 @@ func NewAwsKmsCryptographicMaterialsProvider(keyID string, encryptionContext map
 
 // EncryptionMaterials retrieves and stores encryption materials for the given encryption context.
 func (p *AwsKmsCryptographicMaterialsProvider) EncryptionMaterials(ctx context.Context, materialName string) (materials.CryptographicMaterials, error) {
+	// Get the KEK (Key Encryption Key) from KMS
+	kek, err := delegatedkeys.GetKEK(p.KMSKeyURI, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get KEK: %v", err)
+	}
+
 	// Generate a new Tink keyset and wrap it
-	delegatedKey, wrappedKeyset, err := delegatedkeys.GenerateDataKey(p.KeyID)
+	delegatedKey, wrappedKeyset, err := delegatedkeys.GenerateDataKey(kek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate and wrap data key: %v", err)
 	}
 
-	// Assume GenerateSigningKey is modified to return public key as well
-	delegatedSigningKey, _, publicKeyBytes, err := delegatedkeys.GenerateSigningKey(p.KeyID)
+	// Generate a signing key and wrap it
+	delegatedSigningKey, _, publicKeyBytes, err := delegatedkeys.GenerateSigningKey(kek)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate and wrap data key: %v", err)
+		return nil, fmt.Errorf("failed to generate and wrap signing key: %v", err)
 	}
 
 	// Sign the wrappedKeyset
@@ -97,7 +102,13 @@ func (p *AwsKmsCryptographicMaterialsProvider) DecryptionMaterials(ctx context.C
 		return nil, fmt.Errorf("failed to verify the wrapped keyset's signature: %v", err)
 	}
 
-	delegatedKey, err := delegatedkeys.UnwrapKeyset(encryptedKeyset, p.KeyID)
+	// Get the KEK (Key Encryption Key) from KMS
+	kek, err := delegatedkeys.GetKEK(p.KMSKeyURI, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get KEK: %v", err)
+	}
+
+	delegatedKey, err := delegatedkeys.UnwrapKeyset(encryptedKeyset, kek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt and unwrap data key: %v", err)
 	}
