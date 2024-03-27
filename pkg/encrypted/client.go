@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/provider"
+	"github.com/cloudopsy/dynamodb-encryption-go/pkg/serde"
 	"github.com/cloudopsy/dynamodb-encryption-go/pkg/utils"
 )
 
@@ -29,72 +31,6 @@ type PrimaryKeyInfo struct {
 	Table        string
 	PartitionKey string
 	SortKey      string
-}
-
-// EncryptedPaginator is a paginator for encrypted DynamoDB items.
-type EncryptedPaginator struct {
-	Client    *EncryptedClient
-	NextToken map[string]types.AttributeValue
-}
-
-// NewEncryptedPaginator creates a new instance of EncryptedPaginator.
-func NewEncryptedPaginator(client *EncryptedClient) *EncryptedPaginator {
-	return &EncryptedPaginator{
-		Client:    client,
-		NextToken: nil,
-	}
-}
-
-func (p *EncryptedPaginator) Query(ctx context.Context, input *dynamodb.QueryInput, fn func(*dynamodb.QueryOutput, bool) bool) error {
-	for {
-		if p.NextToken != nil {
-			input.ExclusiveStartKey = p.NextToken
-		}
-
-		output, err := p.Client.Query(ctx, input)
-		if err != nil {
-			return err
-		}
-
-		lastPage := len(output.LastEvaluatedKey) == 0
-		if !fn(output, lastPage) {
-			break
-		}
-
-		if lastPage {
-			break
-		}
-
-		p.NextToken = output.LastEvaluatedKey
-	}
-
-	return nil
-}
-
-func (p *EncryptedPaginator) Scan(ctx context.Context, input *dynamodb.ScanInput, fn func(*dynamodb.ScanOutput, bool) bool) error {
-	for {
-		if p.NextToken != nil {
-			input.ExclusiveStartKey = p.NextToken
-		}
-
-		output, err := p.Client.Scan(ctx, input)
-		if err != nil {
-			return err
-		}
-
-		lastPage := len(output.LastEvaluatedKey) == 0
-		if !fn(output, lastPage) {
-			break
-		}
-
-		if lastPage {
-			break
-		}
-
-		p.NextToken = output.LastEvaluatedKey
-	}
-
-	return nil
 }
 
 // EncryptedClient facilitates encrypted operations on DynamoDB items.
@@ -129,13 +65,6 @@ func NewEncryptedClient(client DynamoDBClientInterface, materialsProvider provid
 // CreateTable creates a new DynamoDB table with the specified name, attribute definitions, and key schema.
 func (ec *EncryptedClient) CreateTable(ctx context.Context, input *dynamodb.CreateTableInput) (*dynamodb.CreateTableOutput, error) {
 	return ec.Client.CreateTable(ctx, input)
-}
-
-func (ec *EncryptedClient) GetPaginator(operationName string) (*EncryptedPaginator, error) {
-	if operationName != "Query" && operationName != "Scan" {
-		return nil, fmt.Errorf("unsupported operation for pagination: %s", operationName)
-	}
-	return NewEncryptedPaginator(ec), nil
 }
 
 // PutItem encrypts an item and puts it into a DynamoDB table.
@@ -381,16 +310,12 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 	}
 
 	encryptedItem := make(map[string]types.AttributeValue)
+	serializer := serde.NewSerializer()
 	for key, value := range item {
 		// Exclude primary keys from encryption
 		if key == pkInfo.PartitionKey || key == pkInfo.SortKey {
 			encryptedItem[key] = value
 			continue
-		}
-
-		rawData, err := utils.AttributeValueToBytes(value)
-		if err != nil {
-			return nil, fmt.Errorf("error converting attribute value to bytes: %v", err)
 		}
 
 		encryptionAction := ec.ClientConfig.Encryption.DefaultAction
@@ -399,14 +324,13 @@ func (ec *EncryptedClient) encryptItem(ctx context.Context, tableName string, it
 		}
 
 		switch encryptionAction {
-		case EncryptStandard:
-			encryptedData, err := encryptionMaterials.EncryptionKey().Encrypt(rawData, []byte(key))
+		case EncryptStandard, EncryptDeterministic:
+			rawData, err := serializer.SerializeAttribute(value)
 			if err != nil {
-				return nil, fmt.Errorf("error encrypting attribute value: %v", err)
+				return nil, fmt.Errorf("error serializing attribute value: %v", err)
 			}
-			encryptedItem[key] = &types.AttributeValueMemberB{Value: encryptedData}
-		case EncryptDeterministic:
-			// TODO: Implement deterministic encryption
+
+			// Encrypt the encoded data
 			encryptedData, err := encryptionMaterials.EncryptionKey().Encrypt(rawData, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("error encrypting attribute value: %v", err)
@@ -438,16 +362,10 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 	}
 
 	decryptedItem := make(map[string]types.AttributeValue)
+	deserializer := serde.NewDeserializer()
 	for key, value := range item {
 		// Copy primary key attributes as is
 		if key == pkInfo.PartitionKey || key == pkInfo.SortKey {
-			decryptedItem[key] = value
-			continue
-		}
-
-		encryptedData, ok := value.(*types.AttributeValueMemberB)
-		if !ok {
-			// If the attribute is not encrypted, copy it as is
 			decryptedItem[key] = value
 			continue
 		}
@@ -457,23 +375,30 @@ func (ec *EncryptedClient) decryptItem(ctx context.Context, tableName string, it
 			encryptionAction = specificAction
 		}
 
-		var decryptedData []byte
 		switch encryptionAction {
 		case EncryptStandard, EncryptDeterministic:
-			// TODO: Implement deterministic encryption
-			decryptedData, err = decryptionMaterials.DecryptionKey().Decrypt(encryptedData.Value, []byte(key))
+			encryptedData, ok := value.(*types.AttributeValueMemberB)
+			if !ok {
+				// If the attribute is not encrypted, copy it as is
+				decryptedItem[key] = value
+				continue
+			}
+
+			// Decrypt the encrypted data
+			decryptedData, err := decryptionMaterials.DecryptionKey().Decrypt(encryptedData.Value, []byte(key))
 			if err != nil {
 				return nil, fmt.Errorf("error decrypting attribute value: %v", err)
 			}
-		case EncryptNone:
-			decryptedData = encryptedData.Value
-		}
 
-		decryptedValue, err := utils.BytesToAttributeValue(decryptedData)
-		if err != nil {
-			return nil, fmt.Errorf("error converting bytes to attribute value: %v", err)
+			// Decode the decrypted data
+			decryptedValue, err := deserializer.DeserializeAttribute(decryptedData)
+			if err != nil {
+				return nil, fmt.Errorf("error decoding attribute value with gob: %v", err)
+			}
+			decryptedItem[key] = decryptedValue
+		case EncryptNone:
+			decryptedItem[key] = value
 		}
-		decryptedItem[key] = decryptedValue
 	}
 
 	return decryptedItem, nil
@@ -508,14 +433,16 @@ func TableInfo(ctx context.Context, client DynamoDBClientInterface, tableName st
 
 // ConstructMaterialName constructs a material name based on an item's primary key.
 func ConstructMaterialName(item map[string]types.AttributeValue, pkInfo *PrimaryKeyInfo) (string, error) {
-	partitionKeyValue, err := utils.AttributeValueToString(item[pkInfo.PartitionKey])
+	// TODO: replace with attributevalue.UnmarshalMap
+	var partitionKeyValue string
+	err := attributevalue.Unmarshal(item[pkInfo.PartitionKey], &partitionKeyValue)
 	if err != nil {
 		return "", fmt.Errorf("invalid partition key attribute type: %v", err)
 	}
 
-	sortKeyValue := ""
+	var sortKeyValue string = ""
 	if pkInfo.SortKey != "" {
-		sortKeyValue, err = utils.AttributeValueToString(item[pkInfo.SortKey])
+		err = attributevalue.Unmarshal(item[pkInfo.SortKey], &sortKeyValue)
 		if err != nil {
 			return "", fmt.Errorf("invalid sort key attribute type: %v", err)
 		}
