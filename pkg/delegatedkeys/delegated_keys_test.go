@@ -164,3 +164,31 @@ func TestVerifySignature(t *testing.T) {
 		t.Error("signature should be valid")
 	}
 }
+
+// func TestUnwrapKeyset(t *testing.T) {
+// 	kek, err := GetKEK(keyURI, true)
+// 	if err != nil {
+// 		t.Fatalf("failed to get KEK: %v", err)
+// 	}
+
+// 	kh, err := keyset.NewHandle(aead.AES256GCMKeyTemplate())
+// 	if err != nil {
+// 		t.Fatalf("failed to create keyset handle: %v", err)
+// 	}
+
+// 	dk := NewTinkDelegatedKey(kh, kek)
+// 	wrappedKeyset, err := dk.WrapKeyset()
+// 	if err != nil {
+// 		t.Fatalf("failed to wrap keyset: %v", err)
+// 	}
+
+// 	unwrappedDK, err := UnwrapKeyset(wrappedKeyset, kek)
+// 	if err != nil {
+// 		t.Fatalf("failed to unwrap keyset: %v", err)
+// 	}
+
+// 	if !cmp.Equal(dk.keysetHandle.KeysetInfo(), unwrappedDK.keysetHandle.KeysetInfo(),
+// 		cmpopts.IgnoreUnexported(tinkpb.KeysetInfo{})) {
+// 		t.Error("unwrapped keyset doesn't match the original keyset")
+// 	}
+// }
